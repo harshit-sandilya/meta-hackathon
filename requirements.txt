@@ -1,0 +1,5 @@
+openenv-core
+unidiff
+pytest
+pyyaml
+pytest-json-report
