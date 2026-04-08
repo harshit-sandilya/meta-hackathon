@@ -3,7 +3,7 @@
 # Meta PyTorch OpenEnv Hackathon — harshit-sandilya/refactoring-environment
 #
 # Required environment variables:
-#   API_BASE_URL  — Base URL of the OpenAI-compatible LLM endpoint (e.g. ngrok tunnel)
+#   API_BASE_URL  — Base URL of the OpenAI-compatible LLM endpoint
 #   MODEL_NAME    — Model identifier
 #   API_KEY       — API key for the LLM endpoint ("no-key" for local/ngrok)
 #   HF_TOKEN      — Hugging Face token (for pulling the HF Space env)
@@ -29,9 +29,9 @@ API_KEY: str = os.environ.get("API_KEY") or "no-key"
 
 HF_REPO_ID = "harshit-sandilya/refactoring-environment"
 
-MAX_STEPS = 10  # steps per episode
-TEMPERATURE = 0.0  # deterministic — required for reproducible grader scores
-MAX_TOKENS = 4096  # edit_file new_content fits comfortably; 65536 blocks event loop
+MAX_STEPS = 10
+TEMPERATURE = 0.0
+MAX_TOKENS = 4096
 
 # episode_count → task (cycles through 3 tasks: 0, 1, 2)
 TASK_EPISODES = {
@@ -70,7 +70,7 @@ SYSTEM_PROMPT = textwrap.dedent(
 
     edit_file  ← patch is REQUIRED wrapper; use new_content OR unified_diff, not both
       {"action_type": "edit_file", "args": {"patch": {"path": "utils.py", "new_content": "...full file content..."}}}
-      {"action_type": "edit_file", "args": {"patch": {"path": "utils.py", "unified_diff": "--- a/utils.py\\n+++ b/utils.py\\n@@..."}}}
+      {"action_type": "edit_file", "args": {"patch": {"path": "utils.py", "unified_diff": "--- a/utils.py\n+++ b/utils.py\n@@ -1,4 +1,4 @@\n context\n-old line\n+new line\n context"}}}
 
     edit_files  ← patches is a list of patch objects
       {"action_type": "edit_files", "args": {"patches": [{"path": "a.py", "new_content": "..."}, {"path": "b.py", "unified_diff": "..."}]}}
@@ -91,19 +91,53 @@ SYSTEM_PROMPT = textwrap.dedent(
     NEVER:
       "args": {"path": "...", "new_content": "..."}   ← WRONG, missing patch wrapper
 
+    ── UNIFIED DIFF RULES (only when using unified_diff) ────────────────────
+
+    A valid unified diff MUST follow this exact format — every character matters:
+
+      --- a/utils.py
+      +++ b/utils.py
+      @@ -<src_start>,<src_count> +<dst_start>,<dst_count> @@
+       <unchanged context line>   ← leading SPACE
+      -<removed line>             ← leading MINUS
+      +<added line>               ← leading PLUS
+       <unchanged context line>   ← leading SPACE
+
+    Rules:
+    1. Line numbers in @@ must EXACTLY match the CURRENT file state.
+       If the file was already edited this episode, its line numbers changed.
+       ALWAYS use new_content (full rewrite) instead of unified_diff when:
+         • You already edited this file earlier in the episode, OR
+         • You are unsure of exact current line numbers.
+    2. Every context line (space-prefixed) must match the file verbatim.
+    3. src_count = number of lines from source (context + removed).
+       dst_count = number of lines in result (context + added).
+    4. Include 2-3 context lines before and after each change.
+    5. Do NOT include inline comments in the diff (e.g. "# F401 – ...").
+       Only show the final clean lines, no annotation comments.
+    6. Separate hunks with a blank line between @@ blocks.
+    7. If multiple hunks are needed, recalculate each @@ line number
+       accounting for the line count delta of all previous hunks.
+
+    PREFER new_content over unified_diff for any file under ~200 lines.
+    unified_diff is only beneficial for very large files (500+ lines)
+    where you are making 1-2 small, targeted changes.
+
     ── WORKFLOW ──────────────────────────────────────────────────────────────
 
     1. list_directory → understand repo structure
     2. view_file → read the target file fully before editing
-    3. edit_file (with patch wrapper) → apply fix
-    4. run_shell → verify with ruff/pytest
+    3. edit_file with new_content → apply ALL fixes in one shot
+    4. run_shell → verify: python -m ruff check . --output-format=concise
     5. submit → when score is 1.0
 
     BEST PRACTICES:
-    - After list_directory, ALWAYS view a file next (never list again)
-    - After view_file, proceed to edit_file immediately (never view the same file twice)
-    - When stuck, run: ruff check . --output-format=concise to get exact line numbers
-    - Never call the same action_type more than 2 times in a row
+    - Prefer new_content for a complete file rewrite over unified_diff.
+    - Fix ALL violations in a single edit_file call, not one-by-one.
+    - After list_directory, ALWAYS view a file next (never list again).
+    - After view_file, proceed to edit_file immediately.
+    - When stuck, run: ruff check . --output-format=concise to get exact line numbers.
+    - Never call the same action_type more than 2 times in a row.
 
     Reply with ONLY a raw JSON object — no markdown, no explanation, no extra keys.
 """
@@ -166,7 +200,13 @@ def parse_action(raw: str) -> RefactorAction:
 
 
 # ── Build per-step prompt from observation ────────────────────────────────────
-def build_prompt(obs, step: int, history: list[str], file_cache: dict[str, str]) -> str:
+def build_prompt(
+    obs,
+    step: int,
+    history: list[str],
+    file_cache: dict[str, str],
+    diff_failures: dict[str, int] | None = None,
+) -> str:
     task_id = getattr(obs, "task_id", "unknown")
     task_desc = getattr(obs, "description", "") or getattr(obs, "task_description", "")
     codebase = getattr(obs, "codebase", None)
@@ -175,6 +215,7 @@ def build_prompt(obs, step: int, history: list[str], file_cache: dict[str, str])
     reward_ctx = getattr(obs, "reward_context", None)
     git_status = getattr(obs, "git", None)
     max_steps = getattr(obs, "max_steps", MAX_STEPS)
+
     # ── CodebaseContext ───────────────────────────────────────────────────
     file_tree = ""
     active_file = ""
@@ -315,6 +356,18 @@ def build_prompt(obs, step: int, history: list[str], file_cache: dict[str, str])
     else:
         file_body = "(no file loaded — use view_file to open one)"
 
+    # ── Diff failure warning ──────────────────────────────────────────────
+    diff_warn = ""
+    if diff_failures:
+        bad = [f"{p} ({n}x)" for p, n in diff_failures.items() if n >= 1]
+        if bad:
+            diff_warn = (
+                f"\n⚠ DIFF FAILURES on: {', '.join(bad)}. "
+                "The file was already edited this episode — its line numbers changed. "
+                "You MUST use new_content (full file rewrite) for these files. "
+                "Do NOT attempt unified_diff on them again."
+            )
+
     return textwrap.dedent(
         f"""
         TASK:           {task_id}
@@ -342,9 +395,10 @@ def build_prompt(obs, step: int, history: list[str], file_cache: dict[str, str])
 
         ── RECENT HISTORY (last 6 steps) ────────────────────────
         {hist_str}
-
+        {diff_warn}
         Choose the single best action to improve code quality.
         Remember: list_directory → view_file → edit_file (don't loop!)
+        PREFER new_content over unified_diff unless the file is 500+ lines.
         Reply with ONLY a raw JSON action object.
     """
     ).strip()
@@ -368,11 +422,12 @@ async def run_episode(env: RefactoringEnv, episode_count: int, task_name: str) -
 
     history: list[str] = []
     file_cache: dict[str, str] = {}
+    diff_failures: dict[str, int] = {}
     final_reward = 0.0
 
     for step in range(1, MAX_STEPS + 1):
 
-        prompt = build_prompt(obs, step, history, file_cache)
+        prompt = build_prompt(obs, step, history, file_cache, diff_failures)
 
         # ── Run LLM in executor so WebSocket keepalives are not blocked ───
         loop = asyncio.get_event_loop()
@@ -383,7 +438,7 @@ async def run_episode(env: RefactoringEnv, episode_count: int, task_name: str) -
             last_3 = [h.split(":")[1].split("→")[0].strip() for h in history[-3:]]
             if len(set(last_3)) == 1 and "view_file" in last_3[0]:
                 print(
-                    "[LOOP_DETECTED] Stuck on view_file for 3 steps — injecting ruff check to give model concrete line numbers"
+                    "[LOOP_DETECTED] Stuck on view_file for 3 steps — injecting ruff check"
                 )
                 action = RefactorAction(
                     action_type="run_shell",
@@ -412,6 +467,33 @@ async def run_episode(env: RefactoringEnv, episode_count: int, task_name: str) -
             step_result = await env.step(action)
 
             obs = step_result.observation
+
+            # ── Invalidate file cache on successful edit ──────────────────
+            if action.action_type in ("edit_file", "edit_files"):
+                edited_paths = []
+                if action.action_type == "edit_file":
+                    patch = action.params.get("patch", {})
+                    if isinstance(patch, dict):
+                        edited_paths.append(patch.get("path", ""))
+                else:
+                    edited_paths.extend(
+                        p.get("path", "")
+                        for p in action.params.get("patches", [])
+                        if isinstance(p, dict)
+                    )
+                for p in edited_paths:
+                    if p in file_cache:
+                        del file_cache[p]
+                        print(
+                            f"[STEP_DEBUG] file_cache invalidated: {p} (edit succeeded)"
+                        )
+                    # Clear diff failure counter on successful edit
+                    if p in diff_failures:
+                        del diff_failures[p]
+                        print(
+                            f"[STEP_DEBUG] diff_failures cleared: {p} (edit succeeded)"
+                        )
+
             done = step_result.done
             reward = step_result.reward if step_result.reward is not None else 0.0
             ctx_score = getattr(
@@ -466,6 +548,20 @@ async def run_episode(env: RefactoringEnv, episode_count: int, task_name: str) -
                     f"Execution error: {error_msg}. "
                     "Check action parameters and try again."
                 )
+                # ── Track unified_diff failures per file ──────────────────
+                if "Hunk" in error_msg or "hunk" in error_msg:
+                    patch = action.params.get("patch", {})
+                    failed_path = (
+                        patch.get("path", "") if isinstance(patch, dict) else ""
+                    )
+                    if failed_path:
+                        diff_failures[failed_path] = (
+                            diff_failures.get(failed_path, 0) + 1
+                        )
+                        print(
+                            f"[STEP_DEBUG] diff_failures[{failed_path}]="
+                            f"{diff_failures[failed_path]} — will force new_content next"
+                        )
             else:
                 error_feedback = f"Environment error: {error_msg}"
 
