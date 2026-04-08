@@ -253,7 +253,6 @@ async def run_episode(env: RefactoringEnv, episode_count: int, task_name: str) -
             error_obs = RefactorObservation(
                 episode_id=obs.episode_id,
                 task_id=obs.task_id,
-                task_description=obs.task_description,
                 current_step=step,
                 max_steps=obs.max_steps,
                 remaining_steps=obs.remaining_steps,
