@@ -17,7 +17,9 @@ import re
 import textwrap
 
 from openai import OpenAI
+from websockets.exceptions import ConnectionClosedError as WsClosedError
 from refactoring_environment import RefactoringEnv, RefactorAction
+
 
 # ── Credentials & config ──────────────────────────────────────────────────────
 API_BASE_URL: str = os.environ["API_BASE_URL"]
@@ -28,8 +30,8 @@ API_KEY: str = os.environ.get("API_KEY") or "no-key"
 HF_REPO_ID = "harshit-sandilya/refactoring-environment"
 
 MAX_STEPS = 10  # steps per episode
-TEMPERATURE = 1.0
-MAX_TOKENS = 4096
+TEMPERATURE = 0.0  # deterministic — required for reproducible grader scores
+MAX_TOKENS = 4096  # edit_file new_content fits comfortably; 65536 blocks event loop
 
 # episode_count → task (cycles through 3 tasks: 0, 1, 2)
 TASK_EPISODES = {
@@ -38,13 +40,15 @@ TASK_EPISODES = {
     "module-decompose": 2,
 }
 
+
 # ── LLM client ────────────────────────────────────────────────────────────────
 client = OpenAI(
     base_url=API_BASE_URL,
     api_key=API_KEY,
 )
 
-# ── System prompt (MUST MATCH EXACT FORMAT) ────────────────────────────────
+
+# ── System prompt ─────────────────────────────────────────────────────────────
 SYSTEM_PROMPT = textwrap.dedent(
     """
     You are an expert Python refactoring agent. Improve the quality of Python
@@ -90,7 +94,7 @@ SYSTEM_PROMPT = textwrap.dedent(
 ).strip()
 
 
-# ── LLM call ──────────────────────────────────────────────────────────────────
+# ── LLM call (sync — must be run via run_in_executor to avoid blocking loop) ──
 def call_llm(prompt: str) -> str:
     try:
         response = client.chat.completions.create(
@@ -105,7 +109,7 @@ def call_llm(prompt: str) -> str:
         )
         return (response.choices[0].message.content or "").strip()
     except Exception as exc:
-        print(f"    [LLM ERROR] {exc}")
+        print(f"[LLM_ERROR] {exc}")
         return ""
 
 
@@ -119,31 +123,34 @@ def parse_action(raw: str) -> RefactorAction:
             params=data.get("args", {"path": "."}),
         )
     except json.JSONDecodeError as e:
+        is_truncated = len(raw) >= int(MAX_TOKENS * 3.5)
         print(
-            f"[PARSE_ERROR] JSONDecodeError: {e} | truncated={len(raw)>=MAX_TOKENS*3} | raw_tail={raw[-80:]!r}"
+            f"[PARSE_ERROR] JSONDecodeError: {e} | len={len(raw)} "
+            f"| likely_truncated={is_truncated} | tail={raw[-80:]!r}"
         )
         return RefactorAction(action_type="list_directory", params={"path": "."})
-    except Exception:
+    except Exception as e:
+        print(f"[PARSE_ERROR] Unexpected: {e} | raw={raw[:100]!r}")
         return RefactorAction(action_type="list_directory", params={"path": "."})
 
 
 # ── Build per-step prompt from observation ────────────────────────────────────
-def build_prompt(obs, step: int, history: list[str], file_cache) -> str:
+def build_prompt(obs, step: int, history: list[str], file_cache: dict[str, str]) -> str:
     task_id = getattr(obs, "task_id", "unknown")
-    task_desc = getattr(obs, "description", "")
+    task_desc = getattr(obs, "description", "") or getattr(obs, "task_description", "")
     codebase = getattr(obs, "codebase", None)
     execution = getattr(obs, "execution", None)
     grader = getattr(obs, "grader", None)
     reward_ctx = getattr(obs, "reward_context", None)
     git_status = getattr(obs, "git", None)
     max_steps = getattr(obs, "max_steps", MAX_STEPS)
-    remaining = getattr(obs, "remaining_steps", MAX_STEPS - step)
-
     # ── CodebaseContext ───────────────────────────────────────────────────
     file_tree = ""
     active_file = ""
     file_content = ""
     line_range = ""
+    total_lines = None
+    remaining = getattr(obs, "remaining_steps", MAX_STEPS - step)
     if codebase:
         entries = getattr(codebase, "file_tree", []) or []
         active_file = getattr(codebase, "active_file", "") or ""
@@ -166,18 +173,22 @@ def build_prompt(obs, step: int, history: list[str], file_cache) -> str:
         file_tree = (
             "\n".join(tree_lines) or "(empty — run list_directory path='.' to populate)"
         )
-        print(f"[STEP_DEBUG] file_tree={file_tree}")
-        print(f"[STEP_DEBUG] active_file={active_file} content_len={len(file_content)}")
+
+        # Accumulate file content across view_file calls
         if active_file and file_content:
+            line_start_val = getattr(codebase, "file_line_start", None)
             if active_file not in file_cache:
                 file_cache[active_file] = file_content
-            elif line_start and line_start > 1:
-                # Append new chunk if it's a later segment
+            elif line_start_val and line_start_val > 1:
                 if file_content not in file_cache[active_file]:
                     file_cache[active_file] += "\n" + file_content
                     print(
-                        f"[STEP_DEBUG] file_cache updated: {active_file} total_len={len(file_cache[active_file])}"
+                        f"[STEP_DEBUG] file_cache updated: {active_file} "
+                        f"total_len={len(file_cache[active_file])}"
                     )
+
+    print(f"[STEP_DEBUG] file_tree={file_tree}")
+    print(f"[STEP_DEBUG] active_file={active_file} content_len={len(file_content)}")
 
     # ── ExecutionContext ──────────────────────────────────────────────────
     exec_block = "None"
@@ -203,9 +214,10 @@ def build_prompt(obs, step: int, history: list[str], file_cache) -> str:
             parts.append(f"[exit code: {retcode}]")
         if parts:
             exec_block = "\n".join(parts)
-        print(f"[STEP_DEBUG] exec_stdout={stdout[:300].replace(chr(10),' ')}")
+
+        print(f"[STEP_DEBUG] exec_stdout={stdout[:300].replace(chr(10), ' ')}")
         if stderr:
-            print(f"[STEP_DEBUG] exec_stderr={stderr[:200].replace(chr(10),' ')}")
+            print(f"[STEP_DEBUG] exec_stderr={stderr[:200].replace(chr(10), ' ')}")
         if run_error:
             print(f"[STEP_DEBUG] exec_run_error={run_error}")
 
@@ -221,6 +233,12 @@ def build_prompt(obs, step: int, history: list[str], file_cache) -> str:
     errors_str = "\n".join(errors) if errors else "None"
     penalties_str = "\n".join(penalties) if penalties else "None"
     regress_tag = "  ⚠ REGRESSION" if is_regress else ""
+
+    print(f"[STEP_DEBUG] grader_scores={scores}")
+    if feedbacks:
+        print(f"[STEP_DEBUG] grader_feedback={feedbacks[0][:200]}")
+    if errors:
+        print(f"[STEP_DEBUG] grader_errors={errors}")
 
     # ── RewardContext ─────────────────────────────────────────────────────
     step_score = getattr(reward_ctx, "step_score", None) if reward_ctx else None
@@ -243,26 +261,28 @@ def build_prompt(obs, step: int, history: list[str], file_cache) -> str:
         if git_parts:
             git_block = "\n".join(git_parts)
 
-    # ── History ───────────────────────────────────────────────────────────
+    # ── File body — use cache if larger than current chunk ────────────────
     hist_str = "\n".join(history[-6:]) if history else "None"
-    total_lines = getattr(codebase, "total_file_lines", None) if codebase else None
-    cached_len = len((file_cache or {}).get(active_file, "")) if active_file else 0
+    cached = file_cache.get(active_file, "") if active_file else ""
+    full_content = cached if len(cached) > len(file_content) else file_content
+
     active_header = f"ACTIVE FILE: {active_file or 'none'}"
     if line_range:
         active_header += f" (viewing {line_range})"
     if total_lines:
         active_header += f" | TOTAL LINES: {total_lines}"
-    if cached_len > 0:
-        active_header += f" | CACHED: {cached_len} B"
-    cached = (file_cache or {}).get(active_file, "") if active_file else ""
-    full_content = cached if len(cached) > len(file_content) else file_content
-    file_body = (
-        file_content[:65536]
-        if file_content
-        else "(no file loaded — use view_file to open one)"
-    )
+    if cached:
+        active_header += f" | CACHED: {len(cached)} B"
+
     if full_content:
-        file_body += f"\n\n[CACHE: {len(full_content)} B total — {'COMPLETE' if len(full_content) >= (getattr(codebase, 'total_file_lines', 0) or 0) * 30 else 'MAY BE PARTIAL — use view_file for more lines'}]"
+        completeness = (
+            "COMPLETE"
+            if len(full_content) >= (total_lines or 0) * 30
+            else "MAY BE PARTIAL — use view_file for remaining lines"
+        )
+        file_body = f"{full_content[:10000]}\n\n[CACHE: {len(full_content)} B total — {completeness}]"
+    else:
+        file_body = "(no file loaded — use view_file to open one)"
 
     return textwrap.dedent(
         f"""
@@ -303,10 +323,12 @@ def build_prompt(obs, step: int, history: list[str], file_cache) -> str:
 async def run_episode(env: RefactoringEnv, episode_count: int, task_name: str) -> float:
     print(f"[EPISODE_START] task={task_name} episode_count={episode_count}")
 
-    # reset() returns a StepResult; .observation is a RefactorObservation
     reset_result = await env.reset(episode_count=episode_count)
     obs = reset_result.observation
     done = reset_result.done
+
+    task_desc = getattr(obs, "description", "") or getattr(obs, "task_description", "")
+    print(f"[EPISODE_START] task_description={task_desc}")
 
     initial_score = getattr(getattr(obs, "reward_context", None), "step_score", None)
     print(
@@ -320,50 +342,55 @@ async def run_episode(env: RefactoringEnv, episode_count: int, task_name: str) -
     for step in range(1, MAX_STEPS + 1):
 
         prompt = build_prompt(obs, step, history, file_cache)
+
+        # ── Run LLM in executor so WebSocket keepalives are not blocked ───
         loop = asyncio.get_event_loop()
         raw_resp = await loop.run_in_executor(None, call_llm, prompt)
-        action = parse_action(raw_resp)
+
+        # ── Loop detection: inject ruff if stuck viewing same file ────────
+        if len(history) >= 3:
+            last_3 = [h.split(":")[1].split("→")[0].strip() for h in history[-3:]]
+            if len(set(last_3)) == 1 and "view_file" in last_3[0]:
+                print(
+                    "[LOOP_DETECTED] Stuck on view_file for 3 steps — injecting ruff check to give model concrete line numbers"
+                )
+                action = RefactorAction(
+                    action_type="run_shell",
+                    params={
+                        "command": "python -m ruff check . --output-format=concise 2>&1 | head -60",
+                        "timeout_sec": 30,
+                    },
+                )
+            else:
+                action = parse_action(raw_resp)
+        else:
+            action = parse_action(raw_resp)
+
         print(f"[STEP_DEBUG] raw_response={raw_resp[:300].replace(chr(10), ' ')}")
         print(
-            f"[STEP_DEBUG] parsed_action={action.action_type} params={json.dumps(action.params)}"
+            f"[STEP_DEBUG] parsed_action={action.action_type} "
+            f"params={json.dumps(action.params)}"
         )
-
         print(
-            f"[STEP] episode={task_name} step={step}/{MAX_STEPS} action={action.action_type}",
+            f"[STEP] episode={task_name} step={step}/{MAX_STEPS} "
+            f"action={action.action_type}",
             flush=True,
         )
 
-        # Debug: Log action details
-        action_details = f"Action details: {action.action_type}"
-        if action.params:
-            action_details += f" with params: {action.params}"
-
-        # step() also returns a StepResult
         try:
-            from websockets.exceptions import ConnectionClosedError as WsClosedError
-
-            try:
-                step_result = await env.step(action)
-            except (WsClosedError, ConnectionResetError, BrokenPipeError) as conn_err:
-                print(f"[STEP_DEBUG] WebSocket dropped: {conn_err} — skipping step")
-                history.append(f"Step {step}: {action.action_type} → WS_DISCONNECT")
-                continue
+            step_result = await env.step(action)
 
             obs = step_result.observation
-            task_desc = getattr(obs, "description", "")
-            print(f"[EPISODE_START] task_description={task_desc}")
             done = step_result.done
-            # reward is a float on the wire (weight-summed score)
             reward = step_result.reward if step_result.reward is not None else 0.0
-
-            # richer grader score lives in obs.reward_context.step_score
             ctx_score = getattr(
                 getattr(obs, "reward_context", None), "step_score", reward
             )
             final_reward = ctx_score if ctx_score is not None else reward
 
             print(
-                f"[STEP] reward={float(reward):.3f} score={final_reward:.3f} done={done}"
+                f"[STEP] reward={float(reward):.3f} "
+                f"score={final_reward:.3f} done={done}"
             )
 
             exec_preview = ""
@@ -382,23 +409,27 @@ async def run_episode(env: RefactoringEnv, episode_count: int, task_name: str) -
                 print(f"[EPISODE_END] task={task_name} reason=done step={step}")
                 break
 
+        except (WsClosedError, ConnectionResetError, BrokenPipeError) as conn_err:
+            print(f"[WS_DISCONNECT] step={step} error={conn_err} — skipping step")
+            history.append(f"Step {step}: {action.action_type} → WS_DISCONNECT")
+            continue
+
         except RuntimeError as e:
             error_msg = str(e)
             print(f"[STEP] error={error_msg}")
 
-            if "File not found" in error_msg:
-                if "File not found in sandbox: " in error_msg:
-                    file_path = error_msg.split("File not found in sandbox: ")[
-                        -1
-                    ].split(" (code:")[0]
-                    error_feedback = (
-                        f"File not found: {file_path}. "
-                        "Use list_directory to verify available files."
-                    )
-                else:
-                    error_feedback = (
-                        "File not found. Use list_directory to verify available files."
-                    )
+            if "File not found in sandbox: " in error_msg:
+                file_path = error_msg.split("File not found in sandbox: ")[-1].split(
+                    " (code:"
+                )[0]
+                error_feedback = (
+                    f"File not found: {file_path}. "
+                    "Use list_directory to verify available files."
+                )
+            elif "File not found" in error_msg:
+                error_feedback = (
+                    "File not found. Use list_directory to verify available files."
+                )
             elif "EXECUTION_ERROR" in error_msg:
                 error_feedback = (
                     f"Execution error: {error_msg}. "
@@ -411,6 +442,7 @@ async def run_episode(env: RefactoringEnv, episode_count: int, task_name: str) -
                 f"Step {step}: {action.action_type} → ERROR: {error_feedback}"
             )
             print(f"[STEP] error_feedback={error_feedback}")
+
     else:
         print(f"[EPISODE_END] task={task_name} reason=max_steps step={MAX_STEPS}")
 
@@ -424,16 +456,12 @@ async def async_main() -> None:
 
     results: dict[str, float] = {}
 
-    # ── Correct async pattern for openenv EnvClient ───────────────────────
-    # from_env() is a coroutine — await it first, then use the returned
-    # env object as an async context manager.
     env = await RefactoringEnv.from_env(HF_REPO_ID, hf_token=HF_TOKEN)
     async with env:
         for task_name, episode_count in TASK_EPISODES.items():
             score = await run_episode(env, episode_count, task_name)
             results[task_name] = score
 
-    # ── Summary ───────────────────────────────────────────────────────────
     overall = sum(results.values()) / len(results)
     for task, score in results.items():
         print(f"[END] task={task} score={score:.4f}")
