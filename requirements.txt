@@ -1,5 +1,9 @@
-openenv-core
-unidiff
-pytest
-pyyaml
-pytest-json-report
+numpy==2.4.4
+openai==2.30.0
+openenv_core==0.2.2
+pandas==3.0.2
+pydantic==2.12.5
+pytest==9.0.2
+PyYAML==6.0.3
+unidiff==0.7.5
+uvicorn==0.44.0

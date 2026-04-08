@@ -1,0 +1,52 @@
+slug: module-decompose
+name: "Complex Module Decomposition and Simplification"
+description: >
+  A monolithic data analysis module contains several overly complex functions with high cyclomatic
+  complexity (average CC 18, max CC 42) and poor Big-O complexity (multiple O(n²) and O(n³) patterns).
+  The module has grown organically with nested loops, redundant computations, and convoluted control
+  flow. The agent must decompose this monolithic module into smaller, focused functions and classes,
+  significantly reducing both cyclomatic complexity and computational complexity. Key anti-patterns
+  include: nested loops (3-4 levels deep), sort-in-loop patterns, string concatenation in loops,
+  and unmemoized recursive functions. The agent should aim to reduce average CC below 8 and eliminate
+  all O(n²) and higher complexity patterns while maintaining existing functionality and ensuring all
+  tests remain green.
+
+language: python
+max_steps: 30
+
+# ── Grader configuration ────────────────────────────────────────────────────
+# This scenario prioritizes the complexity grader with the highest weight
+# to ensure the agent focuses on reducing computational and cyclomatic complexity.
+graders:
+  complexity:
+    weight: 0.65  # Highest weight - primary focus on complexity reduction
+  coverage:
+    weight: 0.20  # Secondary - ensure coverage doesn't degrade during refactoring
+  lint:
+    weight: 0.10  # Tertiary - ensure no new lint violations are introduced
+  symbol:
+    weight: 0.05  # Minimal - just ensure no critical symbols are removed
+
+# ── Efficiency decay ────────────────────────────────────────────────────────
+eff_config:
+  decay_rate: 0.3  # More forgiving decay for this complex refactoring task
+
+# ── Penalties ─────────────────────────────────────────────────────────────────
+penalties:
+  syntax_error: 0.30
+  repeated_noop: 0.10
+  broken_import: 0.20
+  test_regression: 0.30  # Higher penalty for breaking tests during refactoring
+
+# ── Structural invariants ───────────────────────────────────────────────────
+invariants:
+  - type: no_edit
+    paths: ["tests/", "tests/**"]
+    message: "The test suite is read-only — fix the source, not the tests."
+  - type: file_exists
+    paths: ["analysis_module.py"]
+    message: "analysis_module.py must exist (though it can be decomposed into multiple files)."
+
+# ── Test discovery paths ──────────────────────────────────────────────────────
+test_paths:
+  - "tests/"

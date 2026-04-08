@@ -1,0 +1,78 @@
+[build-system]
+requires = ["setuptools>=82", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "openenv-refactoring-environment"
+version = "0.1.0"
+description = "Refactoring environment for OpenEnv"
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [
+  { name = "Harshit Sandilya" }
+]
+dependencies = [
+    "openenv-core>=0.2.1",
+    "unidiff>=0.7.5",
+    "pytest-json-report>=1.5.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-cov>=4.0.0",
+    "ruff>=0.5.0",
+    "mypy>=1.10.0",
+    "radon>=6.0.1",
+    "pylint>=3.2.0",
+]
+
+[project.scripts]
+server = "refactoring_environment.app:main"
+
+[tool.setuptools]
+include-package-data = true
+packages = [
+    "refactoring_environment",
+    "refactoring_environment.environment",
+    "refactoring_environment.models",
+    "refactoring_environment.tasks",
+]
+
+[tool.setuptools.package-dir]
+"refactoring_environment"             = "."
+"refactoring_environment.environment" = "environment"
+"refactoring_environment.models"      = "models"
+"refactoring_environment.tasks"       = "tasks"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+exclude = ["tasks"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+ignore = []
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+exclude = ["tasks"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-q --disable-warnings"
+
+[tool.mypy]
+python_version = "3.11"
+ignore_missing_imports = true
+warn_unused_ignores = true
+warn_unused_configs = true
+warn_return_any = true
+check_untyped_defs = true
+exclude = ["^tasks/"]
+
+[tool.radon]
+cc_min = "B"
+exclude = "tasks"

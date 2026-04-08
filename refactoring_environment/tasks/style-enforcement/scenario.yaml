@@ -1,0 +1,44 @@
+slug: style-enforcement
+name: "Google Python Style Guide Enforcement"
+description: >
+  A Python data processing module contains multiple violations of the Google Python Style Guide
+  across all dimensions: naming conventions, docstring coverage, import organization, type hint
+  annotations, cyclomatic complexity, and formatting rules. The agent must bring the codebase
+  to near-perfect style compliance (95%+) by fixing violations in these areas, with particular
+  emphasis on naming, docstrings, and import organization. The module contains 30+ total violations
+  including missing docstrings on public functions, incorrect naming conventions, disorganized imports,
+  missing type annotations, and formatting issues. The agent should fix all violations while maintaining
+  existing functionality and not breaking any existing tests.
+
+language: python
+max_steps: 25
+
+# ── Grader configuration ────────────────────────────────────────────────────
+# This scenario prioritizes the style grader with significantly higher weight
+# to ensure the agent focuses on code style compliance above other concerns.
+graders:
+  style:
+    weight: 0.60 # Highest weight - primary focus on style compliance
+  lint:
+    weight: 0.20 # Secondary - ensure no new lint violations are introduced
+  coverage:
+    weight: 0.15 # Tertiary - maintain existing coverage
+  symbol:
+    weight: 0.05 # Minimal - just ensure no symbols are removed
+
+# ── Efficiency decay ────────────────────────────────────────────────────────
+eff_config:
+  decay_rate: 0.4 # Slightly more forgiving decay for this complex task
+
+# ── Structural invariants ───────────────────────────────────────────────────
+invariants:
+  - type: no_edit
+    paths: ["tests/", "tests/**"]
+    message: "The test suite is read-only — fix the source, not the tests."
+  - type: file_exists
+    paths: ["data_processor.py"]
+    message: "data_processor.py must not be deleted or renamed."
+
+# ── Test discovery paths ──────────────────────────────────────────────────────
+test_paths:
+  - "tests/"

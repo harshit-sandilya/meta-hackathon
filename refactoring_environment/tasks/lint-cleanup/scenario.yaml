@@ -1,0 +1,45 @@
+slug: lint-cleanup
+name: "Single-File Lint Cleanup"
+description: >
+  A data-processing utility module ships with 12 planted lint violations
+  across five rule categories: unused imports (F401), a bare except clause
+  (E722), a mutable default argument (B006), comparisons to None with ==
+  (E711), an unused loop variable (B007), an unused local variable (F841),
+  an ambiguous variable name (E741), and an overlong function signature
+  (E501). The agent must eliminate all violations without altering any
+  observable behaviour or touching the test suite.
+
+language: python
+max_steps: 15
+
+# ── Grader configuration ────────────────────────────────────────────────────
+# Each entry: weight (required) + optional mode / target_coverage.
+# Graders omitted here are never instantiated (implicit weight = 0).
+# Weights are used to compute qual = Σ w_i · grader_i.score  (30% of reward).
+# CoverageGrader always drives acc separately (50% of reward) regardless.
+graders:
+  lint:
+    weight: 0.50
+  symbol:
+    weight: 0.30
+  style:
+    weight: 0.10
+  coverage:
+    weight: 0.10
+
+# ── Efficiency decay ────────────────────────────────────────────────────────
+eff_config:
+  decay_rate: 0.5 # eff = max(0, 1 - (steps/max_steps) * 0.5)
+
+# ── Structural invariants ───────────────────────────────────────────────────
+invariants:
+  - type: no_edit
+    paths: ["tests/"]
+    message: "The test suite is read-only — fix the source, not the tests."
+  - type: file_exists
+    paths: ["utils.py"]
+    message: "utils.py must not be deleted or renamed."
+
+# ── File paths ──────────────────────────────────────────────────────────────
+test_paths:
+  - "tests/"

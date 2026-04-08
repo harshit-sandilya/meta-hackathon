@@ -1,0 +1,131 @@
+# .github/workflows/deploy.yml
+
+name: Test · Build · Deploy
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  # Docker Hub image name — built from secrets
+  IMAGE_NAME: ${{ secrets.DOCKER_USERNAME }}/refactoring-environment
+
+jobs:
+  # ─────────────────────────────────────────────
+  # JOB 1 — Run the test suite
+  # ─────────────────────────────────────────────
+  test:
+    name: Run Tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: refactoring_environment
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: "latest"
+          enable-cache: true
+          cache-dependency-glob: "refactoring_environment/uv.lock"
+
+      - name: Install dependencies
+        run: uv sync --frozen
+
+      - name: Run all tests
+        run: uv run pytest tests/ -v --tb=short --strict-markers
+
+  # ─────────────────────────────────────────────
+  # JOB 2 — Build & push Docker image to Docker Hub
+  # Only runs on push to main (not PRs)
+  # ─────────────────────────────────────────────
+  build-and-push:
+    name: Build & Push Docker Image
+    runs-on: ubuntu-latest
+    needs: test
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+
+    outputs:
+      # Pass the full image tag to the deploy job
+      image-tag: ${{ steps.meta.outputs.version }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_TOKEN }}
+
+      - name: Extract Docker metadata (tags + labels)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE_NAME }}
+          tags: |
+            # Tag with short git SHA for traceability  e.g. sha-a1b2c3d
+            type=sha,prefix=sha-
+            # Always update the `latest` tag on main
+            type=raw,value=latest
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push image
+        uses: docker/build-push-action@v6
+        with:
+          # Build context and Dockerfile are inside refactoring_environment/
+          context: refactoring_environment
+          file: refactoring_environment/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # Layer caching via GitHub Actions cache
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ─────────────────────────────────────────────
+  # JOB 3 — openenv push + validate submission
+  # ─────────────────────────────────────────────
+  deploy:
+    name: Deploy to HuggingFace & Validate
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install openenv-core
+        run: pip install openenv-core
+
+      # Pushes the environment spec to HuggingFace Hub
+      # HF_TOKEN is automatically picked up by the huggingface_hub SDK
+      - name: Push environment to HuggingFace Hub
+        working-directory: refactoring_environment
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: openenv push --repo-id ${{ vars.HF_USERNAME }}/refactoring-environment
+
+      # validate_submission.sh requires:
+      #   ARG 1: your HF Space ping URL  (stored as repo variable HF_SPACE_URL)
+      #   ARG 2: path to repo dir with Dockerfile + openenv.yaml
+      - name: Run validate_submission.sh
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          chmod +x validate_submission.sh
+          ./validate_submission.sh ${{ vars.HF_SPACE_URL }} ./refactoring_environment

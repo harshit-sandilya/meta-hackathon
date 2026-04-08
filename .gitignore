@@ -1,7 +1,11 @@
 .vscode
+.omc
 __pycache__
 .venv
 *.egg-info
+.ruff_cache
+.mypy_cache
+.pytest_cache
 
 *.pyc
 .DS_Store
