@@ -124,57 +124,144 @@ def parse_action(raw: str) -> RefactorAction:
 
 # ── Build per-step prompt from observation ────────────────────────────────────
 def build_prompt(obs, step: int, history: list[str]) -> str:
-
     task_id = getattr(obs, "task_id", "unknown")
     task_desc = getattr(obs, "task_description", "")
     codebase = getattr(obs, "codebase", None)
+    execution = getattr(obs, "execution", None)
     grader = getattr(obs, "grader", None)
     reward_ctx = getattr(obs, "reward_context", None)
+    git_status = getattr(obs, "git", None)
     max_steps = getattr(obs, "max_steps", MAX_STEPS)
+    remaining = getattr(obs, "remaining_steps", MAX_STEPS - step)
 
+    # ── CodebaseContext ───────────────────────────────────────────────────
     file_tree = ""
     active_file = ""
     file_content = ""
+    line_range = ""
     if codebase:
-        entries = getattr(codebase, "file_tree", [])
+        entries = getattr(codebase, "file_tree", []) or []
         active_file = getattr(codebase, "active_file", "") or ""
         file_content = getattr(codebase, "file_content", "") or ""
-        file_tree = "\n".join(
-            f"{'  ' * e.path.count('/') if hasattr(e, 'path') else ''}"
-            f"{'📁' if getattr(e, 'is_dir', False) else '📄'} "
-            f"{getattr(e, 'path', str(e))}"
-            for e in (entries or [])
+        line_start = getattr(codebase, "file_line_start", None)
+        line_end = getattr(codebase, "file_line_end", None)
+        total_lines = getattr(codebase, "total_file_lines", None)
+        if line_start and line_end:
+            line_range = f"lines {line_start}-{line_end} of {total_lines}"
+
+        tree_lines = []
+        for e in entries:
+            path = getattr(e, "path", str(e))
+            is_dir = getattr(e, "is_dir", False)
+            size = getattr(e, "size_bytes", 0)
+            indent = "  " * path.count("/")
+            kind = "[DIR] " if is_dir else "[FILE]"
+            size_str = "" if is_dir else f" ({size} B)"
+            tree_lines.append(f"{indent}{kind}{path}{size_str}")
+        file_tree = (
+            "\n".join(tree_lines) or "(empty — run list_directory path='.' to populate)"
         )
 
+    # ── ExecutionContext ──────────────────────────────────────────────────
+    exec_block = "None"
+    if execution:
+        cmd = getattr(execution, "command", "") or ""
+        stdout = getattr(execution, "stdout", "") or ""
+        stderr = getattr(execution, "stderr", "") or ""
+        retcode = getattr(execution, "return_code", None)
+        timed_out = getattr(execution, "timed_out", False)
+        run_error = getattr(execution, "run_error", "") or ""
+        parts = []
+        if cmd:
+            parts.append(f"$ {cmd}")
+        if stdout.strip():
+            parts.append(stdout.strip()[:2000])
+        if stderr.strip():
+            parts.append(f"[stderr] {stderr.strip()[:500]}")
+        if run_error:
+            parts.append(f"[error] {run_error}")
+        if timed_out:
+            parts.append("[TIMED OUT]")
+        if retcode is not None:
+            parts.append(f"[exit code: {retcode}]")
+        if parts:
+            exec_block = "\n".join(parts)
+
+    # ── GraderContext ─────────────────────────────────────────────────────
+    scores = getattr(grader, "scores", {}) if grader else {}
     feedbacks = getattr(grader, "feedbacks", []) if grader else []
-    step_score = getattr(reward_ctx, "step_score", None) if reward_ctx else None
-    score_str = f"{step_score:.3f}" if step_score is not None else "n/a"
+    errors = getattr(grader, "errors", []) if grader else []
+    penalties = getattr(grader, "penalties", []) if grader else []
+    is_regress = getattr(grader, "is_regression", False) if grader else False
+
+    scores_str = ", ".join(f"{k}={v:.3f}" for k, v in scores.items()) or "none yet"
     fb_str = "\n".join(feedbacks) if feedbacks else "No feedback yet."
-    hist_str = "\n".join(history[-5:]) if history else "None"
+    errors_str = "\n".join(errors) if errors else "None"
+    penalties_str = "\n".join(penalties) if penalties else "None"
+    regress_tag = "  ⚠ REGRESSION" if is_regress else ""
+
+    # ── RewardContext ─────────────────────────────────────────────────────
+    step_score = getattr(reward_ctx, "step_score", None) if reward_ctx else None
+    cum_penalty = getattr(reward_ctx, "cumulative_penalty", 0.0) if reward_ctx else 0.0
+    score_str = f"{step_score:.3f}" if step_score is not None else "n/a"
+
+    # ── GitStatus ─────────────────────────────────────────────────────────
+    git_block = "No changes yet."
+    if git_status:
+        staged = getattr(git_status, "staged_files", [])
+        unstaged = getattr(git_status, "unstaged_files", [])
+        diff_stat = getattr(git_status, "diff_stat", None)
+        git_parts = []
+        if staged:
+            git_parts.append(f"Staged:   {', '.join(staged)}")
+        if unstaged:
+            git_parts.append(f"Unstaged: {', '.join(unstaged)}")
+        if diff_stat:
+            git_parts.append(f"Diff:     {diff_stat}")
+        if git_parts:
+            git_block = "\n".join(git_parts)
+
+    # ── History ───────────────────────────────────────────────────────────
+    hist_str = "\n".join(history[-6:]) if history else "None"
+    active_header = f"ACTIVE FILE: {active_file or 'none'}"
+    if line_range:
+        active_header += f" ({line_range})"
+    file_body = (
+        file_content[:3000]
+        if file_content
+        else "(no file loaded — use view_file to open one)"
+    )
 
     return textwrap.dedent(
         f"""
-        TASK:         {task_id}
-        GOAL:         {task_desc}
-        STEP:         {step}/{max_steps}
-        CURRENT SCORE:{score_str}
+        TASK:           {task_id}
+        GOAL:           {task_desc}
+        STEP:           {step}/{max_steps}  (remaining: {remaining})
+        CURRENT SCORE:  {score_str}  |  graders: [{scores_str}]
+        CUMUL PENALTY:  {cum_penalty:.3f}{regress_tag}
+        PENALTIES:      {penalties_str}
+        GRADER ERRORS:  {errors_str}
 
-        FILE TREE:
+        ── REPOSITORY FILE TREE ─────────────────────────────────
         {file_tree}
 
-        ACTIVE FILE: {active_file}
-        --- CONTENT (first 3000 chars) ---
-        {file_content[:3000]}
-        --- END ---
+        ── {active_header} ──
+        {file_body}
 
-        GRADER FEEDBACK:
+        ── LAST COMMAND OUTPUT ──────────────────────────────────
+        {exec_block}
+
+        ── GRADER FEEDBACK ──────────────────────────────────────
         {fb_str}
 
-        RECENT HISTORY (last 5 steps):
+        ── GIT STATUS ───────────────────────────────────────────
+        {git_block}
+
+        ── RECENT HISTORY (last 6 steps) ────────────────────────
         {hist_str}
 
         Choose the single best action to improve code quality.
-        Remember: list_directory → view_file → edit_file (don't get stuck looping!)
+        Remember: list_directory → view_file → edit_file (don't loop!)
         Reply with ONLY a raw JSON action object.
     """
     ).strip()
@@ -232,8 +319,16 @@ async def run_episode(env: RefactoringEnv, episode_count: int, task_name: str) -
                 f"[STEP] reward={float(reward):.3f} score={final_reward:.3f} done={done}"
             )
 
+            exec_preview = ""
+            if obs.execution:
+                out = (getattr(obs.execution, "stdout", "") or "").strip()
+                err = (getattr(obs.execution, "run_error", "") or "").strip()
+                if out:
+                    exec_preview = f" | stdout={out[:150].replace(chr(10), ' ')}"
+                elif err:
+                    exec_preview = f" | error={err[:100]}"
             history.append(
-                f"Step {step}: {action.action_type} → score={final_reward:.3f}"
+                f"Step {step}: {action.action_type} → score={final_reward:.3f}{exec_preview}"
             )
 
             if done:

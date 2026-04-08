@@ -73,6 +73,7 @@ class SandboxEnv:
         step: int,
         episode_id: str,
         task_id: str,
+        description: str,
     ) -> RefactorObservation:
         """
         Dispatch action → handler → return fully assembled observation.
@@ -118,6 +119,7 @@ class SandboxEnv:
             reward=reward.step_score,
             episode_id=episode_id,
             task_id=task_id,
+            description=description,
             current_step=step,
             max_steps=self.scenario.max_steps,
             remaining_steps=self.scenario.max_steps - step,

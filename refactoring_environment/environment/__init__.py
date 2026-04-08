@@ -23,6 +23,7 @@ class RefactorEnvironment(Environment):
         # State variables
         self._episode_id: str | None = None
         self._task_id: str | None = None
+        self._task_description = str | None = None
         self._step_count: int = 0
         self._done: bool = False
 
@@ -54,6 +55,7 @@ class RefactorEnvironment(Environment):
         scenario = self._registry.load_scenario(task_name)
         repo_root = self._registry.repo_path(task_name)
         self.sandbox = SandboxEnv(repo_root=repo_root, scenario=scenario)
+        self._task_description = scenario.description
 
         codebase, git = self.sandbox.get_initial_observation()
 
@@ -62,6 +64,7 @@ class RefactorEnvironment(Environment):
             reward=None,
             episode_id=self._episode_id,
             task_id=task_name,
+            description=self._task_description,
             current_step=0,
             max_steps=scenario.max_steps,
             remaining_steps=scenario.max_steps,
@@ -80,6 +83,7 @@ class RefactorEnvironment(Environment):
             step=self._step_count,
             episode_id=self._episode_id,
             task_id=self._task_id,
+            description = self._task_description,
         )
 
     @property
@@ -89,6 +93,7 @@ class RefactorEnvironment(Environment):
         return RefactorState(
             episode_id=self._episode_id,
             task_id=self._task_id,
+            description=self._task_description,
             done=self._done,
             sandbox_path=str(self.sandbox.root),
             baseline_commit=self.sandbox.baseline_commit,
@@ -96,7 +101,7 @@ class RefactorEnvironment(Environment):
                 [{"diff": action_history_diff}] if action_history_diff else []
             ),
             accumulated_penalty=self.sandbox.cumulative_penalty,
-            violations=self.sandbox.graders.violations,
+            violations=list(self.sandbox.graders.violations),
         )
 
     def _require_reset(self) -> None:

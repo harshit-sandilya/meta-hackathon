@@ -4,7 +4,13 @@ from openenv.core.env_server import Action, Observation, State
 from pydantic import Field, model_validator
 
 from .actions import _PARAMS_MAP, ActionParams, ActionType
-from .observations import CodebaseContext, ExecutionContext, GitStatus, GraderContext, RewardContext
+from .observations import (
+    CodebaseContext,
+    ExecutionContext,
+    GitStatus,
+    GraderContext,
+    RewardContext,
+)
 
 
 class RefactorAction(Action):
@@ -35,6 +41,7 @@ class RefactorObservation(Observation):
     # Task identity
     episode_id: str
     task_id: str
+    description: str
 
     # Step budget
     current_step: int = Field(..., ge=0)
@@ -51,6 +58,7 @@ class RefactorObservation(Observation):
 
 class RefactorState(State):
     task_id: str
+    description: str
     done: bool = False
 
     sandbox_path: str
