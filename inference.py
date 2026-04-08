@@ -53,43 +53,59 @@ SYSTEM_PROMPT = textwrap.dedent(
     """
     You are an expert Python refactoring agent. Improve the quality of Python
     code in a repository by taking precise, targeted actions. You will get a
-    reward between 0.0-1.0 for your every action, when you reach 1.0 that's the final stage.
+    reward between 0.0-1.0 for every action. Reach 1.0 to complete the task.
 
-    Available action_type values:
-      view_file        — read a file  (args: path, optional line_start, line_end)
-      list_directory   — list files   (args: path, optional recursive, max_depth)
-      search_codebase  — regex search (args: query, optional file_glob, case_insensitive, context_lines, max_results)
-      edit_file        — edit a file  (args: patch (path, unified_diff/new_content))
-      edit_files       — edit multiple files (args: patches)
-      run_shell        — run a shell command (args: command, timeout_sec, workdir)
-      git_diff         — view diff vs baseline (args: paths, optional stat_only)
-      submit           - submit the code when done, i.e, reward is maximised (reward = 1.0)
+    ── ACTION REFERENCE ──────────────────────────────────────────────────────
 
-    STEP-BY-STEP WORKFLOW:
-    1. First, use list_directory to understand the repository structure
-    2. Identify the target file(s) to refactor from the file tree
-    3. Use view_file to examine the specific file(s) that need changes
-    4. Make targeted edits using edit_file or edit_files
-    5. Use run_shell to run scripts and verify your changes
+    view_file
+      {"action_type": "view_file", "args": {"path": "utils.py"}}
+      {"action_type": "view_file", "args": {"path": "utils.py", "line_start": 50, "line_end": 100}}
+
+    list_directory
+      {"action_type": "list_directory", "args": {"path": "."}}
+      {"action_type": "list_directory", "args": {"path": ".", "recursive": true, "max_depth": 3}}
+
+    search_codebase
+      {"action_type": "search_codebase", "args": {"query": "def process", "file_glob": "*.py", "context_lines": 2}}
+
+    edit_file  ← patch is REQUIRED wrapper; use new_content OR unified_diff, not both
+      {"action_type": "edit_file", "args": {"patch": {"path": "utils.py", "new_content": "...full file content..."}}}
+      {"action_type": "edit_file", "args": {"patch": {"path": "utils.py", "unified_diff": "--- a/utils.py\\n+++ b/utils.py\\n@@..."}}}
+
+    edit_files  ← patches is a list of patch objects
+      {"action_type": "edit_files", "args": {"patches": [{"path": "a.py", "new_content": "..."}, {"path": "b.py", "unified_diff": "..."}]}}
+
+    run_shell
+      {"action_type": "run_shell", "args": {"command": "python -m ruff check . --output-format=concise", "timeout_sec": 30}}
+
+    git_diff
+      {"action_type": "git_diff", "args": {"paths": [], "stat_only": false}}
+
+    submit  ← only when score is maximised
+      {"action_type": "submit", "args": {}}
+
+    ── CRITICAL RULES ────────────────────────────────────────────────────────
+
+    edit_file ALWAYS uses this exact structure:
+      "args": {"patch": {"path": "<file>", "new_content": "<full content>"}}
+    NEVER:
+      "args": {"path": "...", "new_content": "..."}   ← WRONG, missing patch wrapper
+
+    ── WORKFLOW ──────────────────────────────────────────────────────────────
+
+    1. list_directory → understand repo structure
+    2. view_file → read the target file fully before editing
+    3. edit_file (with patch wrapper) → apply fix
+    4. run_shell → verify with ruff/pytest
+    5. submit → when score is 1.0
 
     BEST PRACTICES:
-    - After listing directory, ALWAYS view a file next (don't list again)
-    - When you see an error about a missing file, list_directory ONCE, then view the correct file
-    - Focus on ONE file at a time for targeted refactoring
-    - Use search_codebase to find specific patterns across files
-    - Check git_diff periodically to review your changes
+    - After list_directory, ALWAYS view a file next (never list again)
+    - After view_file, proceed to edit_file immediately (never view the same file twice)
+    - When stuck, run: ruff check . --output-format=concise to get exact line numbers
+    - Never call the same action_type more than 2 times in a row
 
-    ERROR HANDLING:
-    - If file not found: list_directory once → view_file → edit_file
-    - If edit fails: view_file to see current state → retry edit
-    - Never call the same action type more than 2 times in a row
-
-    Reply with ONLY a raw JSON object — no markdown, no explanation.
-    Examples:
-      {"action_type": "view_file", "args": {"path": "utils.py"}}
-      {"action_type": "edit_file", "args": {"path": "utils.py", "new_content": "..."}}
-      {"action_type": "run_shell", "args": {"command": "python utils.py"}}
-      {"action_type": "list_directory", "args": {"path": "."}}
+    Reply with ONLY a raw JSON object — no markdown, no explanation, no extra keys.
 """
 ).strip()
 
@@ -118,10 +134,25 @@ def parse_action(raw: str) -> RefactorAction:
     cleaned = re.sub(r"```(?:json)?|```", "", raw).strip()
     try:
         data = json.loads(cleaned)
-        return RefactorAction(
-            action_type=data.get("action_type", "list_directory"),
-            params=data.get("args", {"path": "."}),
-        )
+        action_type = data.get("action_type", "list_directory")
+        args = data.get("args", {"path": "."})
+
+        # Auto-fix: model sends edit_file without patch wrapper
+        if (
+            action_type == "edit_file"
+            and "patch" not in args
+            and ("path" in args and ("new_content" in args or "unified_diff" in args))
+        ):
+            print("[PARSE_FIX] Wrapping bare edit_file args into patch structure")
+            args = {"patch": args}
+
+        # Auto-fix: model sends edit_files without patches list
+        if action_type == "edit_files" and "patches" not in args and "patch" in args:
+            print("[PARSE_FIX] Wrapping single patch into patches list")
+            args = {"patches": [args["patch"]]}
+
+        return RefactorAction(action_type=action_type, params=args)
+
     except json.JSONDecodeError as e:
         is_truncated = len(raw) >= int(MAX_TOKENS * 3.5)
         print(
@@ -130,7 +161,7 @@ def parse_action(raw: str) -> RefactorAction:
         )
         return RefactorAction(action_type="list_directory", params={"path": "."})
     except Exception as e:
-        print(f"[PARSE_ERROR] Unexpected: {e} | raw={raw[:100]!r}")
+        print(f"[PARSE_ERROR] Unexpected: {e} | raw={raw[:200]!r}")
         return RefactorAction(action_type="list_directory", params={"path": "."})
 
 
