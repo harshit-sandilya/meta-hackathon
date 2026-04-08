@@ -96,7 +96,7 @@ class RefactorEnvironment(Environment):
                 [{"diff": action_history_diff}] if action_history_diff else []
             ),
             accumulated_penalty=self.sandbox.cumulative_penalty,
-            violations=[],
+            violations=self.sandbox.graders.violations,
         )
 
     def _require_reset(self) -> None:

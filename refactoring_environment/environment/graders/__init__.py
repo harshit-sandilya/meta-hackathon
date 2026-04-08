@@ -38,6 +38,7 @@ class GraderDispatcher:
             executor=executor,
             file_handler=file_handler,
         )
+        self.violations = []
         logger.info(
             "GraderDispatcher ready — task=%r  graders=%s",
             scenario.task_id,

@@ -44,31 +44,47 @@ client = OpenAI(
     api_key=API_KEY,
 )
 
-# ── System prompt ─────────────────────────────────────────────────────────────
+# ── System prompt (MUST MATCH EXACT FORMAT) ────────────────────────────────
 SYSTEM_PROMPT = textwrap.dedent(
     """
     You are an expert Python refactoring agent. Improve the quality of Python
-    code in a repository by taking precise, targeted actions.
+    code in a repository by taking precise, targeted actions. You will get a
+    reward between 0.0-1.0 for your every action, when you reach 1.0 that's the final stage.
 
     Available action_type values:
-      view_file        — read a file  (args: path, optional start_line/end_line)
-      list_directory   — list files   (args: path)
-      search_codebase  — regex search (args: pattern, optional path)
-      edit_file        — edit a file  (args: path, new_content OR unified_diff)
+      view_file        — read a file  (args: path, optional line_start, line_end)
+      list_directory   — list files   (args: path, optional recursive, max_depth)
+      search_codebase  — regex search (args: query, optional file_glob, case_insensitive, context_lines, max_results)
+      edit_file        — edit a file  (args: patch (path, unified_diff/new_content))
       edit_files       — edit multiple files (args: patches)
-      run_shell        — run a shell command (args: command)
-      git_diff         — view diff vs baseline (no args needed)
-      submit           — submit your changes (args: optional note)
+      run_shell        — run a shell command (args: command, timeout_sec, workdir)
+      git_diff         — view diff vs baseline (args: paths, optional stat_only)
+      submit           - submit the code when done, i.e, reward is maximised (reward = 1.0)
 
-    Important: Always check file existence with list_directory before trying to view or edit files.
-    If you encounter errors, use list_directory to verify file paths and structure.
+    STEP-BY-STEP WORKFLOW:
+    1. First, use list_directory to understand the repository structure
+    2. Identify the target file(s) to refactor from the file tree
+    3. Use view_file to examine the specific file(s) that need changes
+    4. Make targeted edits using edit_file or edit_files
+    5. Use run_shell to run scripts and verify your changes
+
+    BEST PRACTICES:
+    - After listing directory, ALWAYS view a file next (don't list again)
+    - When you see an error about a missing file, list_directory ONCE, then view the correct file
+    - Focus on ONE file at a time for targeted refactoring
+    - Use search_codebase to find specific patterns across files
+    - Check git_diff periodically to review your changes
+
+    ERROR HANDLING:
+    - If file not found: list_directory once → view_file → edit_file
+    - If edit fails: view_file to see current state → retry edit
+    - Never call the same action type more than 2 times in a row
 
     Reply with ONLY a raw JSON object — no markdown, no explanation.
     Examples:
       {"action_type": "view_file", "args": {"path": "utils.py"}}
       {"action_type": "edit_file", "args": {"path": "utils.py", "new_content": "..."}}
-      {"action_type": "run_shell", "args": {"command": "ruff check ."}}
-      {"action_type": "git_diff",  "args": {}}
+      {"action_type": "run_shell", "args": {"command": "python utils.py"}}
       {"action_type": "list_directory", "args": {"path": "."}}
 """
 ).strip()
@@ -99,16 +115,15 @@ def parse_action(raw: str) -> RefactorAction:
     try:
         data = json.loads(cleaned)
         return RefactorAction(
-            action_type=data.get("action_type", "git_diff"),
-            params=data.get("args", {}),
+            action_type=data.get("action_type", "list_directory"),
+            params=data.get("args", {"path": "."}),
         )
     except Exception:
-        return RefactorAction(action_type="git_diff", params={})
+        return RefactorAction(action_type="list_directory", params={"path": "."})
 
 
 # ── Build per-step prompt from observation ────────────────────────────────────
 def build_prompt(obs, step: int, history: list[str]) -> str:
-    from refactoring_environment.models_internal.actions import ActionType
 
     task_id = getattr(obs, "task_id", "unknown")
     task_desc = getattr(obs, "task_description", "")
@@ -159,6 +174,7 @@ def build_prompt(obs, step: int, history: list[str]) -> str:
         {hist_str}
 
         Choose the single best action to improve code quality.
+        Remember: list_directory → view_file → edit_file (don't get stuck looping!)
         Reply with ONLY a raw JSON action object.
     """
     ).strip()
@@ -166,9 +182,7 @@ def build_prompt(obs, step: int, history: list[str]) -> str:
 
 # ── Single episode ────────────────────────────────────────────────────────────
 async def run_episode(env: RefactoringEnv, episode_count: int, task_name: str) -> float:
-    print(f"\n{'─' * 55}")
-    print(f"  TASK: {task_name}  (episode_count={episode_count})")
-    print(f"{'─' * 55}")
+    print(f"[EPISODE_START] task={task_name} episode_count={episode_count}")
 
     # reset() returns a StepResult; .observation is a RefactorObservation
     reset_result = await env.reset(episode_count=episode_count)
@@ -176,21 +190,28 @@ async def run_episode(env: RefactoringEnv, episode_count: int, task_name: str) -
     done = reset_result.done
 
     initial_score = getattr(getattr(obs, "reward_context", None), "step_score", None)
-    print(f"  Initial score: {initial_score if initial_score is not None else 'n/a'}")
+    print(
+        f"[EPISODE_START] initial_score={initial_score if initial_score is not None else 'n/a'}"
+    )
 
     history: list[str] = []
     final_reward = 0.0
 
     for step in range(1, MAX_STEPS + 1):
-        if done:
-            print(f"  Environment signalled done at step {step - 1}. Stopping.")
-            break
 
         prompt = build_prompt(obs, step, history)
         raw_resp = call_llm(prompt)
         action = parse_action(raw_resp)
 
-        print(f"  Step {step:2d} | action={action.action_type:18s}", end="", flush=True)
+        print(
+            f"[STEP] episode={task_name} step={step}/{MAX_STEPS} action={action.action_type}",
+            flush=True,
+        )
+
+        # Debug: Log action details
+        action_details = f"Action details: {action.action_type}"
+        if action.params:
+            action_details += f" with params: {action.params}"
 
         # step() also returns a StepResult
         try:
@@ -208,7 +229,7 @@ async def run_episode(env: RefactoringEnv, episode_count: int, task_name: str) -
             final_reward = ctx_score if ctx_score is not None else reward
 
             print(
-                f" | reward={float(reward):.3f}  score={final_reward:.3f}  done={done}"
+                f"[STEP] reward={float(reward):.3f} score={final_reward:.3f} done={done}"
             )
 
             history.append(
@@ -216,76 +237,48 @@ async def run_episode(env: RefactoringEnv, episode_count: int, task_name: str) -
             )
 
             if done:
-                print("  ✓ Episode complete.")
+                print(f"[EPISODE_END] task={task_name} reason=done step={step}")
                 break
 
         except RuntimeError as e:
-            # Handle environment execution errors gracefully
             error_msg = str(e)
-            print(f" | ERROR: {error_msg}")
+            print(f"[STEP] error={error_msg}")
 
-            # Extract meaningful error information for the model
             if "File not found" in error_msg:
-                file_path = error_msg.split("File not found in sandbox: ")[-1].split(
-                    " (code:"
-                )[0]
-                error_feedback = f"File not found: {file_path}. Use list_directory to verify available files."
+                if "File not found in sandbox: " in error_msg:
+                    file_path = error_msg.split("File not found in sandbox: ")[
+                        -1
+                    ].split(" (code:")[0]
+                    error_feedback = (
+                        f"File not found: {file_path}. "
+                        "Use list_directory to verify available files."
+                    )
+                else:
+                    error_feedback = (
+                        "File not found. Use list_directory to verify available files."
+                    )
             elif "EXECUTION_ERROR" in error_msg:
-                error_feedback = f"Execution error: {error_msg}. Check action parameters and try again."
+                error_feedback = (
+                    f"Execution error: {error_msg}. "
+                    "Check action parameters and try again."
+                )
             else:
                 error_feedback = f"Environment error: {error_msg}"
 
-            # Add error to history so model can learn from it
             history.append(
                 f"Step {step}: {action.action_type} → ERROR: {error_feedback}"
             )
-
-            # Create a feedback observation for the model
-            # We'll create a mock observation to continue the episode
-            from refactoring_environment.models_internal import (
-                RefactorObservation,
-            )
-            from refactoring_environment.models_internal.observations import (
-                GraderContext,
-            )
-
-            # Create error observation
-            error_obs = RefactorObservation(
-                episode_id=obs.episode_id,
-                task_id=obs.task_id,
-                current_step=step,
-                max_steps=obs.max_steps,
-                remaining_steps=obs.remaining_steps,
-                codebase=obs.codebase,
-                execution=obs.execution,
-                grader=GraderContext(feedbacks=[error_feedback]),
-                git=obs.git,
-                reward_context=obs.reward_context,
-            )
-
-            obs = error_obs
-            done = False
-            reward = 0.0
-            final_reward = 0.0
-
-            print(f"  ✗ Action failed. Feedback provided to model: {error_feedback}")
-
-            # Continue to next step instead of breaking
+            print(f"[STEP] error_feedback={error_feedback}")
     else:
-        print(f"  Reached max steps ({MAX_STEPS}).")
+        print(f"[EPISODE_END] task={task_name} reason=max_steps step={MAX_STEPS}")
 
-    print(f"  FINAL SCORE [{task_name}]: {final_reward:.4f}")
+    print(f"[EPISODE_END] task={task_name} final_score={final_reward:.4f}")
     return final_reward
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 async def async_main() -> None:
-    print("=" * 55)
-    print("  Refactoring Environment — Baseline Inference")
-    print(f"  Model   : {MODEL_NAME}")
-    print(f"  Endpoint: {API_BASE_URL}")
-    print(f"  HF Repo : {HF_REPO_ID}")
-    print("=" * 55)
+    print(f"[START] env={HF_REPO_ID} model={MODEL_NAME} endpoint={API_BASE_URL}")
 
     results: dict[str, float] = {}
 
@@ -299,29 +292,10 @@ async def async_main() -> None:
             results[task_name] = score
 
     # ── Summary ───────────────────────────────────────────────────────────
-    print("\n" + "=" * 55)
-    print("  BASELINE SCORES SUMMARY")
-    print("=" * 55)
-    for task, score in results.items():
-        print(f"  {task:<28} {score:.4f}")
     overall = sum(results.values()) / len(results)
-    print(f"  {'─' * 38}")
-    print(f"  {'Overall average':<28} {overall:.4f}")
-    print("=" * 55)
-
-    with open("baseline_scores.json", "w") as f:
-        json.dump(
-            {
-                "scores": results,
-                "overall": overall,
-                "model": MODEL_NAME,
-                "env": HF_REPO_ID,
-                "max_steps_per_episode": MAX_STEPS,
-            },
-            f,
-            indent=2,
-        )
-    print("\n  Scores saved → baseline_scores.json")
+    for task, score in results.items():
+        print(f"[END] task={task} score={score:.4f}")
+    print(f"[END] overall={overall:.4f}")
 
 
 def main() -> None:

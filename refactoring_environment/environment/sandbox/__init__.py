@@ -114,7 +114,7 @@ class SandboxEnv:
             execution = self.runner.run(params)
 
         return RefactorObservation(
-            done=False,
+            done=action_type == ActionType.submit,
             reward=reward.step_score,
             episode_id=episode_id,
             task_id=task_id,
