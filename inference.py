@@ -28,8 +28,8 @@ API_KEY: str = os.environ.get("API_KEY") or "no-key"
 HF_REPO_ID = "harshit-sandilya/refactoring-environment"
 
 MAX_STEPS = 10  # steps per episode
-TEMPERATURE = 0.0  # deterministic — required for reproducible grader scores
-MAX_TOKENS = 65536
+TEMPERATURE = 1.0
+MAX_TOKENS = 4096
 
 # episode_count → task (cycles through 3 tasks: 0, 1, 2)
 TASK_EPISODES = {
@@ -128,7 +128,7 @@ def parse_action(raw: str) -> RefactorAction:
 
 
 # ── Build per-step prompt from observation ────────────────────────────────────
-def build_prompt(obs, step: int, history: list[str]) -> str:
+def build_prompt(obs, step: int, history: list[str], file_cache) -> str:
     task_id = getattr(obs, "task_id", "unknown")
     task_desc = getattr(obs, "description", "")
     codebase = getattr(obs, "codebase", None)
@@ -168,6 +168,16 @@ def build_prompt(obs, step: int, history: list[str]) -> str:
         )
         print(f"[STEP_DEBUG] file_tree={file_tree}")
         print(f"[STEP_DEBUG] active_file={active_file} content_len={len(file_content)}")
+        if active_file and file_content:
+            if active_file not in file_cache:
+                file_cache[active_file] = file_content
+            elif line_start and line_start > 1:
+                # Append new chunk if it's a later segment
+                if file_content not in file_cache[active_file]:
+                    file_cache[active_file] += "\n" + file_content
+                    print(
+                        f"[STEP_DEBUG] file_cache updated: {active_file} total_len={len(file_cache[active_file])}"
+                    )
 
     # ── ExecutionContext ──────────────────────────────────────────────────
     exec_block = "None"
@@ -235,14 +245,24 @@ def build_prompt(obs, step: int, history: list[str]) -> str:
 
     # ── History ───────────────────────────────────────────────────────────
     hist_str = "\n".join(history[-6:]) if history else "None"
+    total_lines = getattr(codebase, "total_file_lines", None) if codebase else None
+    cached_len = len((file_cache or {}).get(active_file, "")) if active_file else 0
     active_header = f"ACTIVE FILE: {active_file or 'none'}"
     if line_range:
-        active_header += f" ({line_range})"
+        active_header += f" (viewing {line_range})"
+    if total_lines:
+        active_header += f" | TOTAL LINES: {total_lines}"
+    if cached_len > 0:
+        active_header += f" | CACHED: {cached_len} B"
+    cached = (file_cache or {}).get(active_file, "") if active_file else ""
+    full_content = cached if len(cached) > len(file_content) else file_content
     file_body = (
         file_content[:65536]
         if file_content
         else "(no file loaded — use view_file to open one)"
     )
+    if full_content:
+        file_body += f"\n\n[CACHE: {len(full_content)} B total — {'COMPLETE' if len(full_content) >= (getattr(codebase, 'total_file_lines', 0) or 0) * 30 else 'MAY BE PARTIAL — use view_file for more lines'}]"
 
     return textwrap.dedent(
         f"""
@@ -294,12 +314,14 @@ async def run_episode(env: RefactoringEnv, episode_count: int, task_name: str) -
     )
 
     history: list[str] = []
+    file_cache: dict[str, str] = {}
     final_reward = 0.0
 
     for step in range(1, MAX_STEPS + 1):
 
-        prompt = build_prompt(obs, step, history)
-        raw_resp = call_llm(prompt)
+        prompt = build_prompt(obs, step, history, file_cache)
+        loop = asyncio.get_event_loop()
+        raw_resp = await loop.run_in_executor(None, call_llm, prompt)
         action = parse_action(raw_resp)
         print(f"[STEP_DEBUG] raw_response={raw_resp[:300].replace(chr(10), ' ')}")
         print(
@@ -318,7 +340,14 @@ async def run_episode(env: RefactoringEnv, episode_count: int, task_name: str) -
 
         # step() also returns a StepResult
         try:
-            step_result = await env.step(action)
+            from websockets.exceptions import ConnectionClosedError as WsClosedError
+
+            try:
+                step_result = await env.step(action)
+            except (WsClosedError, ConnectionResetError, BrokenPipeError) as conn_err:
+                print(f"[STEP_DEBUG] WebSocket dropped: {conn_err} — skipping step")
+                history.append(f"Step {step}: {action.action_type} → WS_DISCONNECT")
+                continue
 
             obs = step_result.observation
             task_desc = getattr(obs, "description", "")
