@@ -41,7 +41,7 @@ class RefactorObservation(Observation):
     # Task identity
     episode_id: str
     task_id: str
-    description: str
+    description: str | None = None
 
     # Step budget
     current_step: int = Field(..., ge=0)
@@ -58,7 +58,7 @@ class RefactorObservation(Observation):
 
 class RefactorState(State):
     task_id: str
-    description: str
+    description: str | None = None
     done: bool = False
 
     sandbox_path: str

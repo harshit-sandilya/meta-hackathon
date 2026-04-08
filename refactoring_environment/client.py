@@ -76,8 +76,6 @@ class RefactoringEnv(EnvClient[RefactorAction, RefactorObservation, RefactorStat
             **obs_raw,
         }
 
-        print(json.dump(obs_full, indent=4))
-
         observation = RefactorObservation.model_validate(obs_full)
 
         return StepResult(
