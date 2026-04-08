@@ -28,7 +28,7 @@ dev = [
 ]
 
 [project.scripts]
-server = "refactoring_environment.app:main"
+server = "refactoring_environment.server.app:main"
 
 [tool.setuptools]
 include-package-data = true
@@ -42,35 +42,3 @@ packages = [
 "refactoring_environment"                      = "."
 "refactoring_environment.environment"          = "environment"
 "refactoring_environment.models_internal"      = "models_internal"
-
-[tool.ruff]
-line-length = 100
-target-version = "py311"
-exclude = ["tasks"]
-
-[tool.ruff.lint]
-select = ["E", "F", "I", "UP", "B", "SIM"]
-ignore = []
-
-[tool.ruff.format]
-quote-style = "double"
-indent-style = "space"
-exclude = ["tasks"]
-
-[tool.pytest.ini_options]
-testpaths = ["tests"]
-pythonpath = ["."]
-addopts = "-q --disable-warnings"
-
-[tool.mypy]
-python_version = "3.11"
-ignore_missing_imports = true
-warn_unused_ignores = true
-warn_unused_configs = true
-warn_return_any = true
-check_untyped_defs = true
-exclude = ["^tasks/"]
-
-[tool.radon]
-cc_min = "B"
-exclude = "tasks"

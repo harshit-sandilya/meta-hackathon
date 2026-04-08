@@ -50,3 +50,9 @@ class Registry:
         if self._registry is None:
             self._registry = load_task_registry()
         return self._registry
+
+    def get_all_task_names(self) -> list[str]:
+        """
+        Return a list of all available task names in the registry.
+        """
+        return list(self.registry.keys())

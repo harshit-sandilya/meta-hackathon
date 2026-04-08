@@ -27,16 +27,29 @@ class RefactorEnvironment(Environment):
         self._done: bool = False
 
     def reset(
-        self, task_name: str = "lint-cleanup", episode_id: str | None = None
+        self,
+        task_name: str | None = None,
+        episode_count: int = 0,
+        episode_id: str | None = None,
     ) -> RefactorObservation:
         if self.sandbox is not None:
             self.sandbox.destroy()
 
         self._episode_id = episode_id or str(uuid.uuid4())
-        self._task_id = task_name
         self._step_count = 0
         self._accumulated_penalty = 0.0
         self._done = False
+
+        # If task_name is None, select a task based on episode_count
+        if task_name is None:
+            task_names = self._registry.get_all_task_names()
+            if not task_names:
+                raise ValueError("No tasks available in registry")
+            # Use modulo to cycle through available tasks
+            selected_index = episode_count % len(task_names)
+            task_name = task_names[selected_index]
+
+        self._task_id = task_name
 
         scenario = self._registry.load_scenario(task_name)
         repo_root = self._registry.repo_path(task_name)
