@@ -54,32 +54,32 @@ jobs:
   #   Installs root requirements.txt, runs inference.py with live API secrets.
   #   A non-zero exit code blocks the deploy chain entirely.
   # ───────────────────────────────────────────────────────────────────────────
-  # test-inference:
-  #   name: Inference Smoke Test
-  #   runs-on: ubuntu-latest
+  test-inference:
+    name: Inference Smoke Test
+    runs-on: ubuntu-latest
 
-  #   steps:
-  #     - name: Checkout repository
-  #       uses: actions/checkout@v4
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-  #     - name: Set up Python
-  #       uses: actions/setup-python@v5
-  #       with:
-  #         python-version: "3.11"
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
 
-  #     # requirements.txt sits at the repo root (not inside ENV_DIR)
-  #     - name: Install inference requirements
-  #       run: pip install --quiet -r requirements.txt
+      # requirements.txt sits at the repo root (not inside ENV_DIR)
+      - name: Install inference requirements
+        run: pip install --quiet -r requirements.txt
 
-  #     - name: Run inference.py
-  #       # All four secrets are injected as environment variables.
-  #       # inference.py should read them via os.environ / os.getenv.
-  #       env:
-  #         API_BASE_URL: ${{ secrets.API_BASE_URL }}
-  #         MODEL_NAME: ${{ secrets.MODEL_NAME }}
-  #         API_KEY: ${{ secrets.API_KEY }}
-  #         HF_TOKEN: ${{ secrets.HF_TOKEN }}
-  #       run: python inference.py
+      - name: Run inference.py
+        # All four secrets are injected as environment variables.
+        # inference.py should read them via os.environ / os.getenv.
+        env:
+          API_BASE_URL: ${{ secrets.API_BASE_URL }}
+          MODEL_NAME: ${{ secrets.MODEL_NAME }}
+          API_KEY: ${{ secrets.API_KEY }}
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: python inference.py
 
   # ───────────────────────────────────────────────────────────────────────────
   # JOB 3 — Build Docker image and push to Docker Hub
@@ -89,7 +89,7 @@ jobs:
   build-and-push:
     name: Build & Push Docker Image
     runs-on: ubuntu-latest
-    needs: [test]
+    needs: [test, test-inference]
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
 
     outputs:

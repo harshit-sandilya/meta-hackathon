@@ -4,3 +4,23 @@ type: space
 runtime: fastapi
 app: app:app
 port: 8000
+version: "1.0.0"
+description: "Advanced AI agent training environment for real-world Python code refactoring tasks"
+author: "Your Name"
+tags:
+  - real-world
+  - code-refactoring
+  - python
+  - software-engineering
+  - technical-debt
+tasks:
+  - name: lint-cleanup
+    difficulty: easy
+    description: "Eliminate 12 lint violations in a data-processing utility while maintaining 100% test coverage"
+  - name: style-enforcement
+    difficulty: medium
+    description: "Achieve 95%+ Google Python Style Guide compliance by fixing naming, docstrings, imports, and formatting"
+  - name: module-decompose
+    difficulty: hard
+    description: "Decompose monolithic module to reduce cyclomatic complexity from avg 18 to <8 and eliminate O(n²) patterns"
+api_version: "1.0"
