@@ -1,12 +1,6 @@
 # inference.py
 # Baseline inference script for the Refactoring Environment
 # Meta PyTorch OpenEnv Hackathon — harshit-sandilya/refactoring-environment
-#
-# Required environment variables:
-#   API_BASE_URL  — Base URL of the OpenAI-compatible LLM endpoint
-#   MODEL_NAME    — Model identifier
-#   API_KEY       — API key for the LLM endpoint ("no-key" for local/ngrok)
-#   HF_TOKEN      — Hugging Face token (for pulling the HF Space env)
 
 from __future__ import annotations
 
@@ -20,7 +14,6 @@ from openai import OpenAI
 from websockets.exceptions import ConnectionClosedError as WsClosedError
 from refactoring_environment import RefactoringEnv, RefactorAction
 
-
 # ── Credentials & config ──────────────────────────────────────────────────────
 API_BASE_URL: str = os.environ["API_BASE_URL"]
 MODEL_NAME: str = os.environ["MODEL_NAME"]
@@ -31,7 +24,7 @@ HF_REPO_ID = "harshit-sandilya/refactoring-environment"
 
 MAX_STEPS = 10
 TEMPERATURE = 0.0
-MAX_TOKENS = 4096
+MAX_TOKENS = 8192  # FIX: was 4096 — model was truncating new_content mid-JSON
 
 # episode_count → task (cycles through 3 tasks: 0, 1, 2)
 TASK_EPISODES = {
@@ -40,21 +33,19 @@ TASK_EPISODES = {
     "module-decompose": 2,
 }
 
-
 # ── LLM client ────────────────────────────────────────────────────────────────
 client = OpenAI(
     base_url=API_BASE_URL,
     api_key=API_KEY,
 )
 
-
 # ── System prompt ─────────────────────────────────────────────────────────────
 SYSTEM_PROMPT = textwrap.dedent(
     """
     You are an expert Python refactoring agent. Improve the quality of Python
     code in a repository by taking precise, targeted actions. You will get a
-    reward between 0.0-1.0 for every action. Reach 1.0 to complete the task. 
-    The grader's context will provide you what went wrong and what needs to be fixed
+    reward between 0.0-1.0 for every action. Reach 1.0 to complete the task.
+    The grader's context will provide you what went wrong and what needs to be fixed.
 
     ── ACTION REFERENCE ──────────────────────────────────────────────────────
 
@@ -77,7 +68,9 @@ SYSTEM_PROMPT = textwrap.dedent(
       {"action_type": "edit_files", "args": {"patches": [{"path": "a.py", "new_content": "..."}, {"path": "b.py", "unified_diff": "..."}]}}
 
     run_shell
-      {"action_type": "run_shell", "args": {"command": "python -m ruff check . --output-format=concise", "timeout_sec": 30}}
+      {"action_type": "run_shell", "args": {"command": "python -m py_compile utils.py && echo OK", "timeout_sec": 15}}
+      {"action_type": "run_shell", "args": {"command": "python -m pytest tests/ -x -q --tb=short 2>&1", "timeout_sec": 60}}
+      {"action_type": "run_shell", "args": {"command": "ruff check . --output-format=concise 2>&1 | head -60", "timeout_sec": 30}}
 
     git_diff
       {"action_type": "git_diff", "args": {"paths": [], "stat_only": false}}
@@ -91,6 +84,14 @@ SYSTEM_PROMPT = textwrap.dedent(
       "args": {"patch": {"path": "<file>", "new_content": "<full content>"}}
     NEVER:
       "args": {"path": "...", "new_content": "..."}   ← WRONG, missing patch wrapper
+
+    ── TOKEN BUDGET RULE (MOST IMPORTANT) ────────────────────────────────────
+
+    Your ENTIRE response must be valid JSON under 6000 characters.
+    If new_content would exceed ~150 lines, use unified_diff targeting only
+    the lines that need changing — do NOT rewrite the entire file.
+    When using unified_diff, make SMALL targeted hunks (max 30 lines changed).
+    Never produce incomplete JSON — it is worse than no action.
 
     ── UNIFIED DIFF RULES (only when using unified_diff) ────────────────────
 
@@ -114,36 +115,36 @@ SYSTEM_PROMPT = textwrap.dedent(
     3. src_count = number of lines from source (context + removed).
        dst_count = number of lines in result (context + added).
     4. Include 2-3 context lines before and after each change.
-    5. Do NOT include inline comments in the diff (e.g. "# F401 – ...").
-       Only show the final clean lines, no annotation comments.
+    5. Do NOT include inline comments in the diff.
     6. Separate hunks with a blank line between @@ blocks.
     7. If multiple hunks are needed, recalculate each @@ line number
        accounting for the line count delta of all previous hunks.
 
-    PREFER new_content over unified_diff for any file under ~200 lines.
-    unified_diff is only beneficial for very large files (500+ lines)
-    where you are making 1-2 small, targeted changes.
+    PREFER unified_diff over new_content when the file is over 80 lines.
+    Use new_content ONLY for files under 80 lines.
 
     ── WORKFLOW ──────────────────────────────────────────────────────────────
 
     1. list_directory → understand repo structure
     2. view_file → read the target file fully before editing
-    3. edit_file with new_content → apply ALL fixes in one shot
-    4. run_shell → python a/utils.py
-    5. submit → when score is 1.0
+    3. run_shell → ruff check . --output-format=concise (get exact violations)
+    4. edit_file with unified_diff → fix violations incrementally
+    5. run_shell → python -m py_compile <file> && echo OK (verify syntax)
+    6. submit → when score is 1.0 or grader feedback is empty
 
     BEST PRACTICES:
-    - Prefer new_content for a complete file rewrite over unified_diff.
+    - For files over 80 lines, ALWAYS use unified_diff, never new_content.
     - After list_directory, ALWAYS view a file next (never list again).
     - After view_file, proceed to edit_file immediately.
     - Never call the same action_type more than 2 times in a row.
+    - Fix ALL violations from grader feedback in ONE edit, not one by one.
 
     Reply with ONLY a raw JSON object — no markdown, no explanation, no extra keys.
 """
 ).strip()
 
 
-# ── LLM call (sync — must be run via run_in_executor to avoid blocking loop) ──
+# ── LLM call ──────────────────────────────────────────────────────────────────
 def call_llm(prompt: str) -> str:
     try:
         response = client.chat.completions.create(
@@ -162,8 +163,39 @@ def call_llm(prompt: str) -> str:
         return ""
 
 
+# FIX: retry call asking for unified_diff when response looks truncated
+def call_llm_diff_retry(prompt: str, file_path: str) -> str:
+    """Fallback call that forces the model to use unified_diff instead of new_content."""
+    retry_suffix = textwrap.dedent(
+        f"""
+
+        IMPORTANT: Your previous response was too long and got cut off mid-JSON.
+        You MUST use unified_diff (NOT new_content) for {file_path}.
+        Make only the minimal targeted changes needed. Keep the diff under 50 lines total.
+        Reply with ONLY a raw JSON object using unified_diff.
+    """
+    ).strip()
+    try:
+        response = client.chat.completions.create(
+            model=MODEL_NAME,
+            messages=[
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": prompt + "\n\n" + retry_suffix},
+            ],
+            temperature=TEMPERATURE,
+            max_tokens=MAX_TOKENS,
+            stream=False,
+        )
+        return (response.choices[0].message.content or "").strip()
+    except Exception as exc:
+        print(f"[LLM_RETRY_ERROR] {exc}")
+        return ""
+
+
 # ── Parse model output → RefactorAction ──────────────────────────────────────
-def parse_action(raw: str) -> RefactorAction:
+def parse_action(
+    raw: str, prompt: str = ""
+) -> RefactorAction:  # FIX: accept prompt for retry
     cleaned = re.sub(r"```(?:json)?|```", "", raw).strip()
     try:
         data = json.loads(cleaned)
@@ -187,11 +219,22 @@ def parse_action(raw: str) -> RefactorAction:
         return RefactorAction(action_type=action_type, params=args)
 
     except json.JSONDecodeError as e:
-        is_truncated = len(raw) >= int(MAX_TOKENS * 3.5)
+        # FIX: detect truncation and retry with diff-only prompt
+        likely_truncated = len(raw) >= 3800  # conservative threshold well below 4096
         print(
             f"[PARSE_ERROR] JSONDecodeError: {e} | len={len(raw)} "
-            f"| likely_truncated={is_truncated} | tail={raw[-80:]!r}"
+            f"| likely_truncated={likely_truncated} | tail={raw[-80:]!r}"
         )
+
+        # FIX: if truncated and we have a prompt, retry asking for unified_diff
+        if likely_truncated and prompt:
+            # Extract which file was being edited from the truncated response
+            file_match = re.search(r'"path"\s*:\s*"([^"]+\.py)"', raw)
+            file_path = file_match[1] if file_match else "the file"
+            print(f"[PARSE_RETRY] Retrying with unified_diff for {file_path}")
+            if retry_raw := call_llm_diff_retry(prompt, file_path):
+                return parse_action(retry_raw)  # one level of recursion only
+
         return RefactorAction(action_type="list_directory", params={"path": "."})
     except Exception as e:
         print(f"[PARSE_ERROR] Unexpected: {e} | raw={raw[:200]!r}")
@@ -215,7 +258,6 @@ def build_prompt(
     git_status = getattr(obs, "git", None)
     max_steps = getattr(obs, "max_steps", MAX_STEPS)
 
-    # ── CodebaseContext ───────────────────────────────────────────────────
     file_tree = ""
     active_file = ""
     file_content = ""
@@ -245,7 +287,6 @@ def build_prompt(
             "\n".join(tree_lines) or "(empty — run list_directory path='.' to populate)"
         )
 
-        # Accumulate file content across view_file calls
         if active_file and file_content:
             line_start_val = getattr(codebase, "file_line_start", None)
             if active_file not in file_cache:
@@ -261,7 +302,6 @@ def build_prompt(
     print(f"[STEP_DEBUG] file_tree={file_tree}")
     print(f"[STEP_DEBUG] active_file={active_file} content_len={len(file_content)}")
 
-    # ── ExecutionContext ──────────────────────────────────────────────────
     exec_block = "None"
     if execution:
         cmd = getattr(execution, "command", "") or ""
@@ -292,7 +332,6 @@ def build_prompt(
         if run_error:
             print(f"[STEP_DEBUG] exec_run_error={run_error}")
 
-    # ── GraderContext ─────────────────────────────────────────────────────
     scores = getattr(grader, "scores", {}) if grader else {}
     feedbacks = getattr(grader, "feedbacks", []) if grader else []
     errors = getattr(grader, "errors", []) if grader else []
@@ -311,12 +350,10 @@ def build_prompt(
     if errors:
         print(f"[STEP_DEBUG] grader_errors={errors}")
 
-    # ── RewardContext ─────────────────────────────────────────────────────
     step_score = getattr(reward_ctx, "step_score", None) if reward_ctx else None
     cum_penalty = getattr(reward_ctx, "cumulative_penalty", 0.0) if reward_ctx else 0.0
     score_str = f"{step_score:.3f}" if step_score is not None else "n/a"
 
-    # ── GitStatus ─────────────────────────────────────────────────────────
     git_block = "No changes yet."
     if git_status:
         staged = getattr(git_status, "staged_files", [])
@@ -332,7 +369,6 @@ def build_prompt(
         if git_parts:
             git_block = "\n".join(git_parts)
 
-    # ── File body — use cache if larger than current chunk ────────────────
     hist_str = "\n".join(history[-6:]) if history else "None"
     cached = file_cache.get(active_file, "") if active_file else ""
     full_content = cached if len(cached) > len(file_content) else file_content
@@ -345,6 +381,16 @@ def build_prompt(
     if cached:
         active_header += f" | CACHED: {len(cached)} B"
 
+    # FIX: add line count hint so model knows whether to use new_content or unified_diff
+    file_line_count = total_lines or (
+        full_content.count("\n") + 1 if full_content else 0
+    )
+    diff_hint = (
+        f"⚠ FILE IS {file_line_count} LINES — use unified_diff, NOT new_content"
+        if file_line_count > 80
+        else f"File is {file_line_count} lines — new_content is fine"
+    )
+
     if full_content:
         completeness = (
             "COMPLETE"
@@ -355,11 +401,9 @@ def build_prompt(
     else:
         file_body = "(no file loaded — use view_file to open one)"
 
-    # ── Diff failure warning ──────────────────────────────────────────────
     diff_warn = ""
     if diff_failures:
-        bad = [f"{p} ({n}x)" for p, n in diff_failures.items() if n >= 1]
-        if bad:
+        if bad := [f"{p} ({n}x)" for p, n in diff_failures.items() if n >= 1]:
             diff_warn = (
                 f"\n⚠ DIFF FAILURES on: {', '.join(bad)}. "
                 "The file was already edited this episode — its line numbers changed. "
@@ -381,6 +425,7 @@ def build_prompt(
         {file_tree}
 
         ── {active_header} ──
+        {diff_hint}
         {file_body}
 
         ── LAST COMMAND OUTPUT ──────────────────────────────────
@@ -397,7 +442,7 @@ def build_prompt(
         {diff_warn}
         Choose the single best action to improve code quality.
         Remember: list_directory → view_file → edit_file (don't loop!)
-        PREFER new_content over unified_diff unless the file is 500+ lines.
+        For files over 80 lines use unified_diff. For files under 80 lines use new_content.
         Reply with ONLY a raw JSON action object.
     """
     ).strip()
@@ -423,16 +468,18 @@ async def run_episode(env: RefactoringEnv, episode_count: int, task_name: str) -
     file_cache: dict[str, str] = {}
     diff_failures: dict[str, int] = {}
     final_reward = 0.0
+    current_prompt = ""  # FIX: track prompt for retry in parse_action
 
     for step in range(1, MAX_STEPS + 1):
 
-        prompt = build_prompt(obs, step, history, file_cache, diff_failures)
+        current_prompt = build_prompt(
+            obs, step, history, file_cache, diff_failures
+        )  # FIX
 
-        # ── Run LLM in executor so WebSocket keepalives are not blocked ───
         loop = asyncio.get_event_loop()
-        raw_resp = await loop.run_in_executor(None, call_llm, prompt)
+        raw_resp = await loop.run_in_executor(None, call_llm, current_prompt)
 
-        # ── Loop detection: inject ruff if stuck viewing same file ────────
+        # Loop detection: inject ruff if stuck viewing same file
         if len(history) >= 3:
             last_3 = [h.split(":")[1].split("→")[0].strip() for h in history[-3:]]
             if len(set(last_3)) == 1 and "view_file" in last_3[0]:
@@ -442,14 +489,14 @@ async def run_episode(env: RefactoringEnv, episode_count: int, task_name: str) -
                 action = RefactorAction(
                     action_type="run_shell",
                     params={
-                        "command": "python -m ruff check . --output-format=concise 2>&1 | head -60",
+                        "command": "ruff check . --output-format=concise 2>&1 | head -60",
                         "timeout_sec": 30,
                     },
                 )
             else:
-                action = parse_action(raw_resp)
+                action = parse_action(raw_resp, current_prompt)  # FIX: pass prompt
         else:
-            action = parse_action(raw_resp)
+            action = parse_action(raw_resp, current_prompt)  # FIX: pass prompt
 
         print(f"[STEP_DEBUG] raw_response={raw_resp[:300].replace(chr(10), ' ')}")
         print(
@@ -464,10 +511,8 @@ async def run_episode(env: RefactoringEnv, episode_count: int, task_name: str) -
 
         try:
             step_result = await env.step(action)
-
             obs = step_result.observation
 
-            # ── Invalidate file cache on successful edit ──────────────────
             if action.action_type in ("edit_file", "edit_files"):
                 edited_paths = []
                 if action.action_type == "edit_file":
@@ -486,7 +531,6 @@ async def run_episode(env: RefactoringEnv, episode_count: int, task_name: str) -
                         print(
                             f"[STEP_DEBUG] file_cache invalidated: {p} (edit succeeded)"
                         )
-                    # Clear diff failure counter on successful edit
                     if p in diff_failures:
                         del diff_failures[p]
                         print(
@@ -547,7 +591,6 @@ async def run_episode(env: RefactoringEnv, episode_count: int, task_name: str) -
                     f"Execution error: {error_msg}. "
                     "Check action parameters and try again."
                 )
-                # ── Track unified_diff failures per file ──────────────────
                 if "Hunk" in error_msg or "hunk" in error_msg:
                     patch = action.params.get("patch", {})
                     failed_path = (
