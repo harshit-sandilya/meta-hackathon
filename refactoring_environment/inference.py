@@ -22,10 +22,10 @@ from refactoring_environment import RefactoringEnv, RefactorAction
 
 
 # ── Credentials & config ──────────────────────────────────────────────────────
-API_BASE_URL: str = os.environ["API_BASE_URL"]
-MODEL_NAME: str = os.environ["MODEL_NAME"]
-HF_TOKEN: str = os.environ["HF_TOKEN"]
-API_KEY: str = os.environ.get("API_KEY") or "no-key"
+API_BASE_URL: str = os.getenv("API_BASE_URL", "https://router.huggingface.co/v1")
+MODEL_NAME: str = os.getenv("MODEL_NAME", "Qwen/Qwen2.5-72B-Instruct")
+HF_TOKEN: str = os.getenv("HF_TOKEN", "")
+API_KEY: str = os.getenv("API_KEY") or HF_TOKEN or "no-key"
 
 HF_REPO_ID = "harshit-sandilya/refactoring-environment"
 
