@@ -2,9 +2,13 @@ import uuid
 
 from openenv.core.env_server import Environment
 
-from ..models import RefactorAction, RefactorObservation, RefactorState
-from ..models.actions import GitDiffParams
-from ..models.observations import ExecutionContext, GraderContext, RewardContext
+from ..models_internal import RefactorAction, RefactorObservation, RefactorState
+from ..models_internal.actions import GitDiffParams
+from ..models_internal.observations import (
+    ExecutionContext,
+    GraderContext,
+    RewardContext,
+)
 from .registry import Registry
 from .sandbox import SandboxEnv
 

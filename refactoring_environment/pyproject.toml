@@ -35,15 +35,13 @@ include-package-data = true
 packages = [
     "refactoring_environment",
     "refactoring_environment.environment",
-    "refactoring_environment.models",
-    "refactoring_environment.tasks",
+    "refactoring_environment.models_internal",
 ]
 
 [tool.setuptools.package-dir]
-"refactoring_environment"             = "."
-"refactoring_environment.environment" = "environment"
-"refactoring_environment.models"      = "models"
-"refactoring_environment.tasks"       = "tasks"
+"refactoring_environment"                      = "."
+"refactoring_environment.environment"          = "environment"
+"refactoring_environment.models_internal"      = "models_internal"
 
 [tool.ruff]
 line-length = 100

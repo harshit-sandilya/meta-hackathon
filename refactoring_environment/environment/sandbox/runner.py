@@ -18,8 +18,8 @@ import resource
 import subprocess
 from pathlib import Path
 
-from ...models.actions import RunShellParams
-from ...models.observations import ExecutionContext
+from ...models_internal.actions import RunShellParams
+from ...models_internal.observations import ExecutionContext
 
 _1_GB = 1 * 1024**3
 _64_MB = 64 * 1024**2

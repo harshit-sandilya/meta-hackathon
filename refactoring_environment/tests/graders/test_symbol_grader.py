@@ -21,12 +21,13 @@ from refactoring_environment.environment.graders.types.symbol_grader import (
     _aggregate,
 )
 from refactoring_environment.environment.graders.types.base import GradeResult
-from refactoring_environment.models.grader_spec import GraderSpec
+from refactoring_environment.models_internal.grader_spec import GraderSpec
 from refactoring_environment.environment.sandbox.files import FileHandler
 from refactoring_environment.environment.sandbox.runner import ShellExecutor
 
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
+
 
 @pytest.fixture
 def mock_executor() -> Mock:
@@ -49,12 +50,17 @@ def grader_spec() -> GraderSpec:
 
 
 @pytest.fixture
-def symbol_grader(mock_executor: Mock, mock_file_handler: Mock, grader_spec: GraderSpec) -> SymbolGrader:
+def symbol_grader(
+    mock_executor: Mock, mock_file_handler: Mock, grader_spec: GraderSpec
+) -> SymbolGrader:
     """Create a SymbolGrader instance with mocked dependencies."""
-    return SymbolGrader(spec=grader_spec, executor=mock_executor, file_handler=mock_file_handler)
+    return SymbolGrader(
+        spec=grader_spec, executor=mock_executor, file_handler=mock_file_handler
+    )
 
 
 # ── Helper Functions ──────────────────────────────────────────────────────────
+
 
 def _create_test_file(tmp_path: Path, filename: str, content: str) -> Path:
     """Create a test Python file."""
@@ -64,6 +70,7 @@ def _create_test_file(tmp_path: Path, filename: str, content: str) -> Path:
 
 
 # ── Unit Tests for Detection Functions ─────────────────────────────────────────
+
 
 class TestSymbolDetectionFunctions:
     """Test individual symbol detection functions."""
@@ -123,10 +130,13 @@ class TestSymbolDetectionFunctions:
 
 # ── Unit Tests for _compute_metrics ─────────────────────────────────────────
 
+
 class TestSymbolGraderComputeMetrics:
     """Test the _compute_metrics method."""
 
-    def test_empty_repository(self, symbol_grader: SymbolGrader, tmp_path: Path) -> None:
+    def test_empty_repository(
+        self, symbol_grader: SymbolGrader, tmp_path: Path
+    ) -> None:
         """Test with empty repository."""
         # No files in the temporary directory
         result = symbol_grader._compute_metrics()
@@ -136,7 +146,9 @@ class TestSymbolGraderComputeMetrics:
         assert result["by_kind"] == {}
         assert result["symbols"] == []
 
-    def test_file_with_syntax_error(self, symbol_grader: SymbolGrader, tmp_path: Path) -> None:
+    def test_file_with_syntax_error(
+        self, symbol_grader: SymbolGrader, tmp_path: Path
+    ) -> None:
         """Test that syntax errors are handled gracefully."""
         # Create a file with syntax error
         bad_file = _create_test_file(tmp_path, "bad.py", "def func(")
@@ -147,7 +159,9 @@ class TestSymbolGraderComputeMetrics:
         assert result["weighted_total"] == 0.0
         assert result["raw_count"] == 0
 
-    def test_unused_import_detection(self, symbol_grader: SymbolGrader, tmp_path: Path) -> None:
+    def test_unused_import_detection(
+        self, symbol_grader: SymbolGrader, tmp_path: Path
+    ) -> None:
         """Test detection of unused imports."""
         content = """
 import os
@@ -167,24 +181,36 @@ print("hello")  # Neither os nor sys are used
         assert result["weighted_total"] >= 2.0  # At least 2 * 1.0
         assert len(result["symbols"]) >= 2
 
-    def test_used_import_not_flagged(self, symbol_grader: SymbolGrader, tmp_path: Path) -> None:
+    def test_used_import_not_flagged(
+        self, symbol_grader: SymbolGrader, tmp_path: Path
+    ) -> None:
         """Test that used imports are not flagged."""
         content = """
 import os
 
 os.path.join("a", "b")  # os is used
 """
-        _create_test_file(tmp_path, "main.py", content)  # Use main.py to avoid test file detection
+        _create_test_file(
+            tmp_path, "main.py", content
+        )  # Use main.py to avoid test file detection
 
         result = symbol_grader._compute_metrics()
 
         # Note: The dependency graph may detect imports as dead functions
         # This is a known limitation that could be improved
         # For now, we just ensure no unused imports are detected
-        assert "unused_import" not in result["by_kind"] or result["by_kind"]["unused_import"] == 0
-        assert "unused_variable" not in result["by_kind"] or result["by_kind"]["unused_variable"] == 0
+        assert (
+            "unused_import" not in result["by_kind"]
+            or result["by_kind"]["unused_import"] == 0
+        )
+        assert (
+            "unused_variable" not in result["by_kind"]
+            or result["by_kind"]["unused_variable"] == 0
+        )
 
-    def test_unused_variable_detection(self, symbol_grader: SymbolGrader, tmp_path: Path) -> None:
+    def test_unused_variable_detection(
+        self, symbol_grader: SymbolGrader, tmp_path: Path
+    ) -> None:
         """Test detection of unused variables."""
         content = """
 def func():
@@ -200,7 +226,9 @@ def func():
         assert result["raw_count"] >= 2
         assert "unused_variable" in result["by_kind"]
 
-    def test_unreachable_code_detection(self, symbol_grader: SymbolGrader, tmp_path: Path) -> None:
+    def test_unreachable_code_detection(
+        self, symbol_grader: SymbolGrader, tmp_path: Path
+    ) -> None:
         """Test detection of unreachable code."""
         content = """
 def func():
@@ -214,7 +242,9 @@ def func():
         assert result["raw_count"] >= 1
         assert "unreachable_block" in result["by_kind"]
 
-    def test_test_files_are_excluded(self, symbol_grader: SymbolGrader, tmp_path: Path) -> None:
+    def test_test_files_are_excluded(
+        self, symbol_grader: SymbolGrader, tmp_path: Path
+    ) -> None:
         """Test that test files are excluded from analysis."""
         # Create regular file with unused import
         _create_test_file(tmp_path, "main.py", "import unused\n")
@@ -231,10 +261,13 @@ def func():
 
 # ── Unit Tests for grade ─────────────────────────────────────────────────────
 
+
 class TestSymbolGraderGrade:
     """Test the grade method."""
 
-    def test_improvement_from_baseline(self, symbol_grader: SymbolGrader, tmp_path: Path) -> None:
+    def test_improvement_from_baseline(
+        self, symbol_grader: SymbolGrader, tmp_path: Path
+    ) -> None:
         """Test grading when dead code is reduced from baseline."""
         # Create file with dead code
         content = """
@@ -263,7 +296,9 @@ x = 10  # unused variable
         assert 0.0 <= result.score <= 1.0
         assert any("Dead code:" in fb for fb in result.feedbacks)
 
-    def test_regression_from_baseline(self, symbol_grader: SymbolGrader, tmp_path: Path) -> None:
+    def test_regression_from_baseline(
+        self, symbol_grader: SymbolGrader, tmp_path: Path
+    ) -> None:
         """Test grading when dead code increases from baseline."""
         # Create file with some dead code
         content = """
@@ -285,7 +320,9 @@ x = 10  # unused
         assert any("regression" in fb.lower() for fb in result.feedbacks)
         assert result.added_violations > 0
 
-    def test_perfect_score_when_clean(self, symbol_grader: SymbolGrader, tmp_path: Path) -> None:
+    def test_perfect_score_when_clean(
+        self, symbol_grader: SymbolGrader, tmp_path: Path
+    ) -> None:
         """Test that clean code gets perfect score."""
         # Create file with no dead code
         content = """
@@ -310,13 +347,17 @@ print(os.path.join("a", "b"))  # os is used
         assert result.score <= 1.0
         assert any("Dead code:" in fb for fb in result.feedbacks)
 
-    def test_depgraph_failure_handling(self, symbol_grader: SymbolGrader, tmp_path: Path) -> None:
+    def test_depgraph_failure_handling(
+        self, symbol_grader: SymbolGrader, tmp_path: Path
+    ) -> None:
         """Test that DependencyGraph failures are handled gracefully."""
         # Create some files
         _create_test_file(tmp_path, "main.py", "def func(): pass\n")
 
         # Mock DependencyGraph to fail
-        with patch('refactoring_environment.environment.graders.types.symbol_grader.DependencyGraph') as mock_dg:
+        with patch(
+            "refactoring_environment.environment.graders.types.symbol_grader.DependencyGraph"
+        ) as mock_dg:
             mock_instance = mock_dg.return_value
             mock_instance.build_from_files.side_effect = Exception("Mock failure")
 
@@ -329,13 +370,19 @@ print(os.path.join("a", "b"))  # os is used
 
 # ── Integration Tests ────────────────────────────────────────────────────────
 
+
 class TestSymbolGraderIntegration:
     """Integration tests with realistic code scenarios."""
 
-    def test_complex_realistic_codebase(self, symbol_grader: SymbolGrader, tmp_path: Path) -> None:
+    def test_complex_realistic_codebase(
+        self, symbol_grader: SymbolGrader, tmp_path: Path
+    ) -> None:
         """Test with a more complex, realistic codebase."""
         # Create multiple files
-        _create_test_file(tmp_path, "main.py", """
+        _create_test_file(
+            tmp_path,
+            "main.py",
+            """
 import os
 import sys
 from utils import helper
@@ -349,9 +396,13 @@ def unused_function():
     return 42
 
 x = 10  # unused variable
-""")
+""",
+        )
 
-        _create_test_file(tmp_path, "utils.py", """
+        _create_test_file(
+            tmp_path,
+            "utils.py",
+            """
 def helper():
     return "helper"
 
@@ -359,7 +410,8 @@ def another_helper():
     return "another"  # unused function
 
 y = 20  # unused variable
-""")
+""",
+        )
 
         result = symbol_grader._compute_metrics()
 
@@ -369,7 +421,9 @@ y = 20  # unused variable
         assert "unused_variable" in result["by_kind"]
         assert "dead_function" in result["by_kind"]
 
-    def test_file_with_underscore_prefix_not_flagged(self, symbol_grader: SymbolGrader, tmp_path: Path) -> None:
+    def test_file_with_underscore_prefix_not_flagged(
+        self, symbol_grader: SymbolGrader, tmp_path: Path
+    ) -> None:
         """Test that variables starting with underscore are not flagged."""
         content = """
 def func():
@@ -383,4 +437,7 @@ def func():
 
         # Should not detect underscore-prefixed variables as unused variables
         # Note: Dependency graph may still detect imports as dead functions
-        assert "unused_variable" not in result["by_kind"] or result["by_kind"]["unused_variable"] == 0
+        assert (
+            "unused_variable" not in result["by_kind"]
+            or result["by_kind"]["unused_variable"] == 0
+        )

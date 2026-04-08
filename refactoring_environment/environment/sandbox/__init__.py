@@ -10,9 +10,9 @@ from pathlib import Path
 from typing import Any
 
 from ...environment.registry import ScenarioSpec
-from ...models import RefactorAction, RefactorObservation
-from ...models.actions import ActionType
-from ...models.observations import (
+from ...models_internal import RefactorAction, RefactorObservation
+from ...models_internal.actions import ActionType
+from ...models_internal.observations import (
     CodebaseContext,
     ExecutionContext,
     GitStatus,

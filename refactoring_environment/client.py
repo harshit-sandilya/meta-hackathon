@@ -20,11 +20,10 @@ Sync usage (scripts / notebooks):
         state  = env.state()
 """
 
-
 from openenv.core.client_types import StepResult
 from openenv.core.env_client import EnvClient
 
-from .models import RefactorAction, RefactorObservation, RefactorState
+from .models_internal import RefactorAction, RefactorObservation, RefactorState
 
 
 class RefactoringEnv(EnvClient[RefactorAction, RefactorObservation, RefactorState]):

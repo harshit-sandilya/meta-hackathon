@@ -8,20 +8,29 @@ on:
   pull_request:
     branches: [main]
 
+# ── All derived values live here — nothing hardcoded below ───────────────────
+# Secrets (sensitive): DOCKER_TOKEN, HF_TOKEN,
+#                      API_BASE_URL, MODEL_NAME, API_KEY
+# Variables (non-sensitive): HF_USERNAME, ENV_NAME, ENV_DIR, DOCKER_USERNAME
+#   HF_USERNAME = harshit-sandilya
+#   ENV_NAME    = refactoring-environment   (slug used in Docker/HF names)
+#   ENV_DIR     = refactoring_environment   (actual directory on disk)
+#   DOCKER_USERNAME = harshitsandilya
 env:
-  # Docker Hub image name — built from secrets
-  IMAGE_NAME: ${{ secrets.DOCKER_USERNAME }}/refactoring-environment
+  IMAGE_NAME: ${{ vars.DOCKER_USERNAME }}/${{ vars.ENV_NAME }}
+  HF_REPO_ID: ${{ vars.HF_USERNAME }}/${{ vars.ENV_NAME }}
+  HF_SPACE_URL: https://${{ vars.HF_USERNAME }}-${{ vars.ENV_NAME }}.hf.space
 
 jobs:
-  # ─────────────────────────────────────────────
-  # JOB 1 — Run the test suite
-  # ─────────────────────────────────────────────
+  # ───────────────────────────────────────────────────────────────────────────
+  # JOB 1 — Unit / integration tests (runs on every push AND every PR)
+  # ───────────────────────────────────────────────────────────────────────────
   test:
     name: Run Tests
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: refactoring_environment
+        working-directory: ${{ vars.ENV_DIR }}
 
     steps:
       - name: Checkout repository
@@ -32,7 +41,7 @@ jobs:
         with:
           version: "latest"
           enable-cache: true
-          cache-dependency-glob: "refactoring_environment/uv.lock"
+          cache-dependency-glob: "${{ vars.ENV_DIR }}/uv.lock"
 
       - name: Install dependencies
         run: uv sync --frozen
@@ -40,19 +49,51 @@ jobs:
       - name: Run all tests
         run: uv run pytest tests/ -v --tb=short --strict-markers
 
-  # ─────────────────────────────────────────────
-  # JOB 2 — Build & push Docker image to Docker Hub
-  # Only runs on push to main (not PRs)
-  # ─────────────────────────────────────────────
+  # ───────────────────────────────────────────────────────────────────────────
+  # JOB 2 — Real-world inference smoke test
+  #   Installs root requirements.txt, runs inference.py with live API secrets.
+  #   A non-zero exit code blocks the deploy chain entirely.
+  # ───────────────────────────────────────────────────────────────────────────
+  # test-inference:
+  #   name: Inference Smoke Test
+  #   runs-on: ubuntu-latest
+
+  #   steps:
+  #     - name: Checkout repository
+  #       uses: actions/checkout@v4
+
+  #     - name: Set up Python
+  #       uses: actions/setup-python@v5
+  #       with:
+  #         python-version: "3.11"
+
+  #     # requirements.txt sits at the repo root (not inside ENV_DIR)
+  #     - name: Install inference requirements
+  #       run: pip install --quiet -r requirements.txt
+
+  #     - name: Run inference.py
+  #       # All four secrets are injected as environment variables.
+  #       # inference.py should read them via os.environ / os.getenv.
+  #       env:
+  #         API_BASE_URL: ${{ secrets.API_BASE_URL }}
+  #         MODEL_NAME: ${{ secrets.MODEL_NAME }}
+  #         API_KEY: ${{ secrets.API_KEY }}
+  #         HF_TOKEN: ${{ secrets.HF_TOKEN }}
+  #       run: python inference.py
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # JOB 3 — Build Docker image and push to Docker Hub
+  #   Blocked until BOTH test jobs pass.
+  #   Only runs on a push to main (not on PRs).
+  # ───────────────────────────────────────────────────────────────────────────
   build-and-push:
     name: Build & Push Docker Image
     runs-on: ubuntu-latest
-    needs: test
+    needs: [test]
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
 
     outputs:
-      # Pass the full image tag to the deploy job
-      image-tag: ${{ steps.meta.outputs.version }}
+      image-digest: ${{ steps.build.outputs.digest }}
 
     steps:
       - name: Checkout repository
@@ -61,7 +102,7 @@ jobs:
       - name: Log in to Docker Hub
         uses: docker/login-action@v3
         with:
-          username: ${{ secrets.DOCKER_USERNAME }}
+          username: ${{ vars.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_TOKEN }}
 
       - name: Extract Docker metadata (tags + labels)
@@ -70,30 +111,30 @@ jobs:
         with:
           images: ${{ env.IMAGE_NAME }}
           tags: |
-            # Tag with short git SHA for traceability  e.g. sha-a1b2c3d
+            # Traceable tag — e.g. sha-a1b2c3d
             type=sha,prefix=sha-
-            # Always update the `latest` tag on main
+            # Always keep :latest pointing to HEAD of main
             type=raw,value=latest
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
       - name: Build and push image
+        id: build
         uses: docker/build-push-action@v6
         with:
-          # Build context and Dockerfile are inside refactoring_environment/
-          context: refactoring_environment
-          file: refactoring_environment/Dockerfile
+          # Dockerfile + build context are inside ENV_DIR
+          context: ${{ vars.ENV_DIR }}
+          file: ${{ vars.ENV_DIR }}/Dockerfile
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          # Layer caching via GitHub Actions cache
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-  # ─────────────────────────────────────────────
-  # JOB 3 — openenv push + validate submission
-  # ─────────────────────────────────────────────
+  # ───────────────────────────────────────────────────────────────────────────
+  # JOB 4 — Push to HuggingFace Hub and validate submission
+  # ───────────────────────────────────────────────────────────────────────────
   deploy:
     name: Deploy to HuggingFace & Validate
     runs-on: ubuntu-latest
@@ -112,20 +153,23 @@ jobs:
       - name: Install openenv-core
         run: pip install openenv-core
 
-      # Pushes the environment spec to HuggingFace Hub
-      # HF_TOKEN is automatically picked up by the huggingface_hub SDK
+      # HF_TOKEN is read automatically by the huggingface_hub SDK
       - name: Push environment to HuggingFace Hub
-        working-directory: refactoring_environment
+        working-directory: ${{ vars.ENV_DIR }}
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
-        run: openenv push --repo-id ${{ vars.HF_USERNAME }}/refactoring-environment
+        run: openenv push --repo-id ${{ env.HF_REPO_ID }}
 
-      # validate_submission.sh requires:
-      #   ARG 1: your HF Space ping URL  (stored as repo variable HF_SPACE_URL)
-      #   ARG 2: path to repo dir with Dockerfile + openenv.yaml
+      # HF Spaces can take ~60 s to boot after a fresh deploy
+      - name: Wait for HF Space to warm up
+        run: sleep 60
+
+      # validate_submission.sh args:
+      #   $1 — HF Space ping URL
+      #   $2 — path to repo dir containing Dockerfile + openenv.yaml
       - name: Run validate_submission.sh
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
           chmod +x validate_submission.sh
-          ./validate_submission.sh ${{ vars.HF_SPACE_URL }} ./refactoring_environment
+          ./validate_submission.sh ${{ env.HF_SPACE_URL }} ./${{ vars.ENV_DIR }}

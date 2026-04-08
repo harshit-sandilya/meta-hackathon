@@ -28,7 +28,7 @@ import os
 from openenv.core.env_server.http_server import create_app
 
 from .environment import RefactorEnvironment
-from .models import RefactorAction, RefactorObservation
+from .models_internal import RefactorAction, RefactorObservation
 
 app = create_app(
     RefactorEnvironment,

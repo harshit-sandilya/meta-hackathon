@@ -46,10 +46,9 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from openai import OpenAI
 
-from refactor_env.client import RefactorEnv
-from refactor_env.models import (
+from refactoring_environment.client import RefactorEnv
+from refactoring_environment.models_internal import (
     ActionType,
-    FilePatch,
     RefactorAction,
     RefactorObservation,
 )

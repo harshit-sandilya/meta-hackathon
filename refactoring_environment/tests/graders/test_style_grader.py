@@ -14,12 +14,13 @@ import pytest
 
 from refactoring_environment.environment.graders.types.style_grader import StyleGrader
 from refactoring_environment.environment.graders.types.base import GradeResult
-from refactoring_environment.models.grader_spec import GraderSpec
+from refactoring_environment.models_internal.grader_spec import GraderSpec
 from refactoring_environment.environment.sandbox.files import FileHandler
 from refactoring_environment.environment.sandbox.runner import ShellExecutor
 
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
+
 
 @pytest.fixture
 def mock_executor() -> Mock:
@@ -58,12 +59,17 @@ def grader_spec() -> GraderSpec:
 
 
 @pytest.fixture
-def style_grader(mock_executor: Mock, mock_file_handler: Mock, grader_spec: GraderSpec) -> StyleGrader:
+def style_grader(
+    mock_executor: Mock, mock_file_handler: Mock, grader_spec: GraderSpec
+) -> StyleGrader:
     """Create a StyleGrader instance with mocked dependencies."""
-    return StyleGrader(spec=grader_spec, executor=mock_executor, file_handler=mock_file_handler)
+    return StyleGrader(
+        spec=grader_spec, executor=mock_executor, file_handler=mock_file_handler
+    )
 
 
 # ── Helper Functions ──────────────────────────────────────────────────────────
+
 
 def _create_test_file(tmp_path: Path, filename: str, content: str) -> Path:
     """Create a test Python file."""
@@ -73,6 +79,7 @@ def _create_test_file(tmp_path: Path, filename: str, content: str) -> Path:
 
 
 # ── Unit Tests for _compute_metrics ─────────────────────────────────────────
+
 
 class TestStyleGraderComputeMetrics:
     """Test the _compute_metrics method."""
@@ -87,7 +94,9 @@ class TestStyleGraderComputeMetrics:
         assert result["raw_score"] == 1.0
         assert result["error_viols"] == 0
 
-    def test_perfect_style_code(self, style_grader: StyleGrader, tmp_path: Path) -> None:
+    def test_perfect_style_code(
+        self, style_grader: StyleGrader, tmp_path: Path
+    ) -> None:
         """Test with perfectly styled code."""
         content = """
 \"\"\"A perfectly styled module.\"\"\"
@@ -149,7 +158,9 @@ bad_constant = 10
         assert "N003" in result["by_rule"]  # Function name
         assert "N004" in result["by_rule"]  # Constant naming
 
-    def test_docstring_violations(self, style_grader: StyleGrader, tmp_path: Path) -> None:
+    def test_docstring_violations(
+        self, style_grader: StyleGrader, tmp_path: Path
+    ) -> None:
         """Test detection of docstring violations."""
         content = """
 \"\"\"Module with docstring.\"\"\"
@@ -192,7 +203,9 @@ from typing import List, Dict
         assert "I003" in result["by_rule"]  # Multiple imports
         assert "I004" in result["by_rule"]  # Individual imports
 
-    def test_complexity_violations(self, style_grader: StyleGrader, tmp_path: Path) -> None:
+    def test_complexity_violations(
+        self, style_grader: StyleGrader, tmp_path: Path
+    ) -> None:
         """Test detection of complexity violations."""
         # Create a function with high cyclomatic complexity (> 10)
         content = """
@@ -239,7 +252,9 @@ def simple_function():
         # Instead, check that we get some violations from the complex function
         assert len(result["by_rule"]) > 0
 
-    def test_formatting_violations(self, style_grader: StyleGrader, tmp_path: Path) -> None:
+    def test_formatting_violations(
+        self, style_grader: StyleGrader, tmp_path: Path
+    ) -> None:
         """Test detection of formatting violations."""
         # Create content with actual trailing whitespace
         content = """def function_with_trailing_whitespace():
@@ -258,7 +273,9 @@ def function_without_blank_line():
         assert result["total_viols"] > 0
         assert len(result["by_rule"]) > 0
 
-    def test_type_hint_violations(self, style_grader: StyleGrader, tmp_path: Path) -> None:
+    def test_type_hint_violations(
+        self, style_grader: StyleGrader, tmp_path: Path
+    ) -> None:
         """Test detection of type hint violations."""
         content = """
 \"\"\"Module with type hint violations.\"\"\"
@@ -283,7 +300,9 @@ def proper_types(param: int) -> str:
         assert "T001" in result["by_rule"]  # Missing return type
         assert "T002" in result["by_rule"]  # Missing param types
 
-    def test_syntax_error_handling(self, style_grader: StyleGrader, tmp_path: Path) -> None:
+    def test_syntax_error_handling(
+        self, style_grader: StyleGrader, tmp_path: Path
+    ) -> None:
         """Test that syntax errors are handled gracefully."""
         content = "def incomplete_function("
         _create_test_file(tmp_path, "syntax_error.py", content)
@@ -294,7 +313,9 @@ def proper_types(param: int) -> str:
         assert result is not None
         assert "files_checked" in result
 
-    def test_test_files_excluded(self, style_grader: StyleGrader, tmp_path: Path) -> None:
+    def test_test_files_excluded(
+        self, style_grader: StyleGrader, tmp_path: Path
+    ) -> None:
         """Test that test files are excluded from analysis."""
         # Create regular file with violations
         content = """
@@ -318,10 +339,13 @@ def BadFunctionName():
 
 # ── Unit Tests for grade ─────────────────────────────────────────────────────
 
+
 class TestStyleGraderGrade:
     """Test the grade method."""
 
-    def test_improvement_from_baseline(self, style_grader: StyleGrader, tmp_path: Path) -> None:
+    def test_improvement_from_baseline(
+        self, style_grader: StyleGrader, tmp_path: Path
+    ) -> None:
         """Test grading when style violations are reduced."""
         # Create file with some violations
         content = """
@@ -341,7 +365,14 @@ def good_function():
             "total_viols": 4,
             "error_viols": 2,
             "by_dim": {"naming": 1, "docstrings": 1, "imports": 1, "type_hints": 1},
-            "dim_scores": {"naming": 0.9, "docstrings": 0.9, "imports": 1.0, "type_hints": 0.9, "complexity": 1.0, "formatting": 1.0},
+            "dim_scores": {
+                "naming": 0.9,
+                "docstrings": 0.9,
+                "imports": 1.0,
+                "type_hints": 0.9,
+                "complexity": 1.0,
+                "formatting": 1.0,
+            },
         }
 
         result = style_grader.grade()
@@ -351,7 +382,9 @@ def good_function():
         assert 0.0 <= result.score <= 1.0
         assert "Style" in str(result.feedbacks)
 
-    def test_regression_from_baseline(self, style_grader: StyleGrader, tmp_path: Path) -> None:
+    def test_regression_from_baseline(
+        self, style_grader: StyleGrader, tmp_path: Path
+    ) -> None:
         """Test grading when style violations increase."""
         # Create file with violations
         content = """
@@ -369,7 +402,14 @@ def another_bad_function():
             "total_viols": 1,
             "error_viols": 0,
             "by_dim": {"naming": 1},
-            "dim_scores": {"naming": 0.95, "docstrings": 1.0, "imports": 1.0, "type_hints": 1.0, "complexity": 1.0, "formatting": 1.0},
+            "dim_scores": {
+                "naming": 0.95,
+                "docstrings": 1.0,
+                "imports": 1.0,
+                "type_hints": 1.0,
+                "complexity": 1.0,
+                "formatting": 1.0,
+            },
         }
 
         result = style_grader.grade()
@@ -378,7 +418,9 @@ def another_bad_function():
         assert result.score == 0.0
         assert any("Regression" in fb for fb in result.feedbacks)
 
-    def test_perfect_score_when_clean(self, style_grader: StyleGrader, tmp_path: Path) -> None:
+    def test_perfect_score_when_clean(
+        self, style_grader: StyleGrader, tmp_path: Path
+    ) -> None:
         """Test that clean code gets perfect score."""
         # Create file with no violations
         content = """
@@ -397,7 +439,14 @@ def perfect_function(param: int) -> str:
             "total_viols": 3,
             "error_viols": 1,
             "by_dim": {"naming": 1, "docstrings": 1, "type_hints": 1},
-            "dim_scores": {"naming": 0.9, "docstrings": 0.9, "imports": 1.0, "type_hints": 0.9, "complexity": 1.0, "formatting": 1.0},
+            "dim_scores": {
+                "naming": 0.9,
+                "docstrings": 0.9,
+                "imports": 1.0,
+                "type_hints": 0.9,
+                "complexity": 1.0,
+                "formatting": 1.0,
+            },
         }
 
         result = style_grader.grade()
@@ -406,7 +455,9 @@ def perfect_function(param: int) -> str:
         assert result.score == 1.0
         assert any("Gold standard" in fb for fb in result.feedbacks)
 
-    def test_empty_baseline_perfect_code(self, style_grader: StyleGrader, tmp_path: Path) -> None:
+    def test_empty_baseline_perfect_code(
+        self, style_grader: StyleGrader, tmp_path: Path
+    ) -> None:
         """Test with perfect code and empty baseline."""
         # Create perfect file
         content = """
@@ -425,7 +476,17 @@ def perfect_function(param: int) -> str:
             "total_viols": 0,
             "error_viols": 0,
             "by_dim": {},
-            "dim_scores": {d: 1.0 for d in ["naming", "docstrings", "imports", "type_hints", "complexity", "formatting"]},
+            "dim_scores": {
+                d: 1.0
+                for d in [
+                    "naming",
+                    "docstrings",
+                    "imports",
+                    "type_hints",
+                    "complexity",
+                    "formatting",
+                ]
+            },
         }
 
         result = style_grader.grade()
@@ -437,13 +498,19 @@ def perfect_function(param: int) -> str:
 
 # ── Integration Tests ────────────────────────────────────────────────────────
 
+
 class TestStyleGraderIntegration:
     """Integration tests with realistic code scenarios."""
 
-    def test_complex_realistic_codebase(self, style_grader: StyleGrader, tmp_path: Path) -> None:
+    def test_complex_realistic_codebase(
+        self, style_grader: StyleGrader, tmp_path: Path
+    ) -> None:
         """Test with a complex, realistic codebase."""
         # Create main module with various issues
-        _create_test_file(tmp_path, "main.py", """
+        _create_test_file(
+            tmp_path,
+            "main.py",
+            """
 \"\"\"Main module with style issues.\"\"\"
 
 import os, sys  # I003
@@ -475,10 +542,14 @@ def complex_func(x, y, z):  # T001, T002
         if y > 0:
             return x + y
     return 0
-""")
+""",
+        )
 
         # Create utility module
-        _create_test_file(tmp_path, "utils.py", """
+        _create_test_file(
+            tmp_path,
+            "utils.py",
+            """
 \"\"\"Utility functions.\"\"\"
 
 
@@ -490,7 +561,8 @@ def helper():
 def another_helper(param: int) -> str:
     \"\"\"Another helper.\"\"\"
     return str(param)
-""")
+""",
+        )
 
         result = style_grader._compute_metrics()
 

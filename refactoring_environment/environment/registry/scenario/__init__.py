@@ -21,7 +21,7 @@ from pathlib import Path
 
 import yaml
 
-from ....models.grader_spec import GraderSpec
+from ....models_internal.grader_spec import GraderSpec
 from .invariant import AnyInvariant, build_invariant
 
 

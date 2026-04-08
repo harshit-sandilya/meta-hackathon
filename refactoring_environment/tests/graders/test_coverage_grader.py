@@ -19,13 +19,14 @@ from refactoring_environment.environment.graders.types.coverage_grader import (
     _parse_coverage,
 )
 from refactoring_environment.environment.graders.types.base import GradeResult
-from refactoring_environment.models.grader_spec import GraderSpec
+from refactoring_environment.models_internal.grader_spec import GraderSpec
 from refactoring_environment.environment.sandbox.files import FileHandler
 from refactoring_environment.environment.sandbox.runner import ShellExecutor
-from refactoring_environment.models.actions import RunShellParams
+from refactoring_environment.models_internal.actions import RunShellParams
 
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
+
 
 @pytest.fixture
 def mock_executor() -> Mock:
@@ -48,12 +49,17 @@ def grader_spec() -> GraderSpec:
 
 
 @pytest.fixture
-def coverage_grader(mock_executor: Mock, mock_file_handler: Mock, grader_spec: GraderSpec) -> CoverageGrader:
+def coverage_grader(
+    mock_executor: Mock, mock_file_handler: Mock, grader_spec: GraderSpec
+) -> CoverageGrader:
     """Create a CoverageGrader instance with mocked dependencies."""
-    return CoverageGrader(spec=grader_spec, executor=mock_executor, file_handler=mock_file_handler)
+    return CoverageGrader(
+        spec=grader_spec, executor=mock_executor, file_handler=mock_file_handler
+    )
 
 
 # ── Helper Functions ──────────────────────────────────────────────────────────
+
 
 def _create_test_file(tmp_path: Path, filename: str, content: str) -> Path:
     """Create a test Python file."""
@@ -65,12 +71,14 @@ def _create_test_file(tmp_path: Path, filename: str, content: str) -> Path:
 def _create_json_file(tmp_path: Path, filename: str, content: dict) -> Path:
     """Create a JSON file with given content."""
     import json
+
     file_path = tmp_path / filename
     file_path.write_text(json.dumps(content))
     return file_path
 
 
 # ── Unit Tests for Helper Functions ─────────────────────────────────────────
+
 
 class TestCoverageHelperFunctions:
     """Test helper functions for coverage parsing."""
@@ -127,7 +135,7 @@ class TestCoverageHelperFunctions:
                         "num_branches": 25,
                     }
                 }
-            }
+            },
         }
 
         cov_json = _create_json_file(tmp_path, "coverage.json", cov_data)
@@ -153,10 +161,13 @@ class TestCoverageHelperFunctions:
 
 # ── Unit Tests for _compute_metrics ─────────────────────────────────────────
 
+
 class TestCoverageGraderComputeMetrics:
     """Test the _compute_metrics method."""
 
-    def test_empty_repository_no_tests(self, coverage_grader: CoverageGrader, tmp_path: Path) -> None:
+    def test_empty_repository_no_tests(
+        self, coverage_grader: CoverageGrader, tmp_path: Path
+    ) -> None:
         """Test with empty repository (no test files)."""
         # Mock executor to simulate pytest running with no tests found
         mock_result = Mock()
@@ -164,7 +175,7 @@ class TestCoverageGraderComputeMetrics:
         mock_result.run_error = ""
         mock_result.stdout = "No tests found"
 
-        with patch.object(coverage_grader.executor, 'run', return_value=mock_result):
+        with patch.object(coverage_grader.executor, "run", return_value=mock_result):
             result = coverage_grader._compute_metrics()
 
         assert result["passed"] == 0
@@ -173,32 +184,38 @@ class TestCoverageGraderComputeMetrics:
         assert result["total"] == 0
         assert result["pass_rate"] == 0.0
 
-    def test_pytest_timeout(self, coverage_grader: CoverageGrader, tmp_path: Path) -> None:
+    def test_pytest_timeout(
+        self, coverage_grader: CoverageGrader, tmp_path: Path
+    ) -> None:
         """Test timeout handling."""
         mock_result = Mock()
         mock_result.timed_out = True
         mock_result.run_error = ""
         mock_result.stdout = ""
 
-        with patch.object(coverage_grader.executor, 'run', return_value=mock_result):
+        with patch.object(coverage_grader.executor, "run", return_value=mock_result):
             result = coverage_grader._compute_metrics()
 
         assert result["timed_out"] == True
         assert result["run_error"] == "pytest timed out after 60s"
 
-    def test_pytest_run_error(self, coverage_grader: CoverageGrader, tmp_path: Path) -> None:
+    def test_pytest_run_error(
+        self, coverage_grader: CoverageGrader, tmp_path: Path
+    ) -> None:
         """Test pytest run error handling."""
         mock_result = Mock()
         mock_result.timed_out = False
         mock_result.run_error = "ModuleNotFoundError: pytest"
         mock_result.stdout = ""
 
-        with patch.object(coverage_grader.executor, 'run', return_value=mock_result):
+        with patch.object(coverage_grader.executor, "run", return_value=mock_result):
             result = coverage_grader._compute_metrics()
 
         assert result["run_error"] == "ModuleNotFoundError: pytest"
 
-    def test_successful_pytest_run(self, coverage_grader: CoverageGrader, tmp_path: Path) -> None:
+    def test_successful_pytest_run(
+        self, coverage_grader: CoverageGrader, tmp_path: Path
+    ) -> None:
         """Test successful pytest run with coverage."""
         # Create mock pytest and coverage JSON files
         pytest_data = {
@@ -224,7 +241,7 @@ class TestCoverageGraderComputeMetrics:
                         "num_branches": 25,
                     }
                 }
-            }
+            },
         }
 
         pytest_json = _create_json_file(tmp_path, "pytest_report.json", pytest_data)
@@ -237,9 +254,9 @@ class TestCoverageGraderComputeMetrics:
         mock_result.stderr = ""
         mock_result.return_code = 0
 
-        with patch.object(coverage_grader.executor, 'run', return_value=mock_result):
+        with patch.object(coverage_grader.executor, "run", return_value=mock_result):
             # Mock the tmp directory behavior
-            with patch('tempfile.TemporaryDirectory') as mock_tmp:
+            with patch("tempfile.TemporaryDirectory") as mock_tmp:
                 mock_tmp.return_value.__enter__.return_value = str(tmp_path)
                 result = coverage_grader._compute_metrics()
 
@@ -265,7 +282,9 @@ class TestCoverageGraderComputeMetrics:
         mode = coverage_grader._resolve_mode()
         assert mode == "constraint"  # Updated to reflect current implementation
 
-    def test_mode_resolution_scenario_type(self, coverage_grader: CoverageGrader) -> None:
+    def test_mode_resolution_scenario_type(
+        self, coverage_grader: CoverageGrader
+    ) -> None:
         """Test mode resolution based on scenario type."""
         # After removing config dependency, scenario type detection is no longer supported
         # This test validates that the method works without config
@@ -274,6 +293,7 @@ class TestCoverageGraderComputeMetrics:
 
 
 # ── Unit Tests for grade methods ─────────────────────────────────────────
+
 
 class TestCoverageGraderGrade:
     """Test the grade methods."""
@@ -286,7 +306,7 @@ class TestCoverageGraderGrade:
             "failed": 1,
             "errors": 0,
             "total": 6,
-            "pass_rate": 5/6,
+            "pass_rate": 5 / 6,
             "line_coverage": 0.7,
             "branch_coverage": 0.6,
             "per_file": {},
@@ -306,7 +326,9 @@ class TestCoverageGraderGrade:
             "run_error": "",
         }
 
-        with patch.object(coverage_grader, '_compute_metrics', return_value=current_metrics):
+        with patch.object(
+            coverage_grader, "_compute_metrics", return_value=current_metrics
+        ):
             result = coverage_grader.grade()
 
         assert isinstance(result, GradeResult)
@@ -342,7 +364,9 @@ class TestCoverageGraderGrade:
             "run_error": "",
         }
 
-        with patch.object(coverage_grader, '_compute_metrics', return_value=current_metrics):
+        with patch.object(
+            coverage_grader, "_compute_metrics", return_value=current_metrics
+        ):
             result = coverage_grader.grade()
 
         assert isinstance(result, GradeResult)
@@ -354,14 +378,18 @@ class TestCoverageGraderGrade:
     def test_objective_mode_improvement(self, coverage_grader: CoverageGrader) -> None:
         """Test objective mode when working toward target."""
         # Mock config for objective mode
-        with patch.object(coverage_grader.spec, 'config', {"coverage": {"mode": "objective", "target_coverage": 0.9}}):
+        with patch.object(
+            coverage_grader.spec,
+            "config",
+            {"coverage": {"mode": "objective", "target_coverage": 0.9}},
+        ):
             # Set baseline metrics
             coverage_grader._baseline = {
                 "passed": 5,
                 "failed": 1,
                 "errors": 0,
                 "total": 6,
-                "pass_rate": 5/6,
+                "pass_rate": 5 / 6,
                 "line_coverage": 0.7,
                 "branch_coverage": 0.6,
                 "per_file": {},
@@ -381,7 +409,9 @@ class TestCoverageGraderGrade:
                 "run_error": "",
             }
 
-            with patch.object(coverage_grader, '_compute_metrics', return_value=current_metrics):
+            with patch.object(
+                coverage_grader, "_compute_metrics", return_value=current_metrics
+            ):
                 result = coverage_grader.grade()
 
             assert isinstance(result, GradeResult)
@@ -389,9 +419,15 @@ class TestCoverageGraderGrade:
             assert result.score < 1.0  # Not yet at target
             assert "objective" in str(result.feedbacks)
 
-    def test_objective_mode_target_reached(self, coverage_grader: CoverageGrader) -> None:
+    def test_objective_mode_target_reached(
+        self, coverage_grader: CoverageGrader
+    ) -> None:
         """Test objective mode when target is reached."""
-        with patch.object(coverage_grader.spec, 'config', {"coverage": {"mode": "objective", "target_coverage": 0.8}}):
+        with patch.object(
+            coverage_grader.spec,
+            "config",
+            {"coverage": {"mode": "objective", "target_coverage": 0.8}},
+        ):
             # Set baseline metrics
             coverage_grader._baseline = {
                 "passed": 5,
@@ -418,7 +454,9 @@ class TestCoverageGraderGrade:
                 "run_error": "",
             }
 
-            with patch.object(coverage_grader, '_compute_metrics', return_value=current_metrics):
+            with patch.object(
+                coverage_grader, "_compute_metrics", return_value=current_metrics
+            ):
                 result = coverage_grader.grade()
 
             assert isinstance(result, GradeResult)
@@ -427,7 +465,9 @@ class TestCoverageGraderGrade:
 
     def test_objective_mode_regression(self, coverage_grader: CoverageGrader) -> None:
         """Test objective mode when coverage regresses."""
-        with patch.object(coverage_grader.spec, 'config', {"coverage": {"mode": "objective"}}):
+        with patch.object(
+            coverage_grader.spec, "config", {"coverage": {"mode": "objective"}}
+        ):
             # Set baseline metrics
             coverage_grader._baseline = {
                 "passed": 10,
@@ -454,7 +494,9 @@ class TestCoverageGraderGrade:
                 "run_error": "",
             }
 
-            with patch.object(coverage_grader, '_compute_metrics', return_value=current_metrics):
+            with patch.object(
+                coverage_grader, "_compute_metrics", return_value=current_metrics
+            ):
                 result = coverage_grader.grade()
 
             assert isinstance(result, GradeResult)
@@ -476,7 +518,9 @@ class TestCoverageGraderGrade:
             "per_file": {},
         }
 
-        with patch.object(coverage_grader, '_compute_metrics', return_value=current_metrics):
+        with patch.object(
+            coverage_grader, "_compute_metrics", return_value=current_metrics
+        ):
             result = coverage_grader.grade()
 
         assert result.score == 0.0
@@ -485,19 +529,26 @@ class TestCoverageGraderGrade:
 
 # ── Integration Tests ────────────────────────────────────────────────────────
 
+
 class TestCoverageGraderIntegration:
     """Integration tests for realistic scenarios."""
 
-    def test_constraint_mode_with_config(self, coverage_grader: CoverageGrader, tmp_path: Path) -> None:
+    def test_constraint_mode_with_config(
+        self, coverage_grader: CoverageGrader, tmp_path: Path
+    ) -> None:
         """Test constraint mode with explicit configuration."""
-        with patch.object(coverage_grader.spec, 'config', {
-            "coverage": {
-                "mode": "constraint",
-                "coverage_tolerance": 0.05,  # 5% tolerance
-                "test_paths": ["tests/"],
-                "source_paths": ["."],
-            }
-        }):
+        with patch.object(
+            coverage_grader.spec,
+            "config",
+            {
+                "coverage": {
+                    "mode": "constraint",
+                    "coverage_tolerance": 0.05,  # 5% tolerance
+                    "test_paths": ["tests/"],
+                    "source_paths": ["."],
+                }
+            },
+        ):
             mode = coverage_grader._resolve_mode()
             assert mode == "constraint"
 
@@ -527,7 +578,9 @@ class TestCoverageGraderIntegration:
                 "run_error": "",
             }
 
-            with patch.object(coverage_grader, '_compute_metrics', return_value=current_metrics):
+            with patch.object(
+                coverage_grader, "_compute_metrics", return_value=current_metrics
+            ):
                 result = coverage_grader.grade()
 
             # Should get full score since within tolerance
@@ -542,7 +595,7 @@ class TestCoverageGraderIntegration:
             "failed": 1,
             "errors": 0,
             "total": 6,
-            "pass_rate": 5/6,
+            "pass_rate": 5 / 6,
             "line_coverage": 0.7,
             "branch_coverage": 0.6,
             "per_file": {},
@@ -562,7 +615,9 @@ class TestCoverageGraderIntegration:
             "run_error": "",
         }
 
-        with patch.object(coverage_grader, '_compute_metrics', return_value=current_metrics):
+        with patch.object(
+            coverage_grader, "_compute_metrics", return_value=current_metrics
+        ):
             result = coverage_grader.grade_as_constraint()
 
         assert isinstance(result, GradeResult)
@@ -570,9 +625,9 @@ class TestCoverageGraderIntegration:
 
     def test_forced_objective_mode(self, coverage_grader: CoverageGrader) -> None:
         """Test forcing objective mode via grade_as_objective."""
-        with patch.object(coverage_grader.spec, 'config', {
-            "coverage": {"target_coverage": 0.9}
-        }):
+        with patch.object(
+            coverage_grader.spec, "config", {"coverage": {"target_coverage": 0.9}}
+        ):
             # Set baseline
             coverage_grader._baseline = {
                 "passed": 5,
@@ -599,7 +654,9 @@ class TestCoverageGraderIntegration:
                 "run_error": "",
             }
 
-            with patch.object(coverage_grader, '_compute_metrics', return_value=current_metrics):
+            with patch.object(
+                coverage_grader, "_compute_metrics", return_value=current_metrics
+            ):
                 result = coverage_grader.grade_as_objective()
 
             assert isinstance(result, GradeResult)

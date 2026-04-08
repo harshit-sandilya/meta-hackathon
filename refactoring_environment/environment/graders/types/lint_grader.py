@@ -7,7 +7,7 @@ from __future__ import annotations
 import json
 import logging
 
-from ....models.actions import RunShellParams
+from ....models_internal.actions import RunShellParams
 from .base import BaseGrader, GradeResult
 
 logger = logging.getLogger(__name__)

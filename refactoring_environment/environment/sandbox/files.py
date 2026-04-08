@@ -15,7 +15,7 @@ from pathlib import Path
 
 from unidiff import PatchSet
 
-from ...models.actions import (
+from ...models_internal.actions import (
     EditFileParams,
     EditFilesParams,
     ListDirectoryParams,
@@ -23,8 +23,8 @@ from ...models.actions import (
     SearchCodebaseParams,
     ViewFileParams,
 )
-from ...models.observations import CodebaseContext
-from ...models.primitives import FilePatch, FileTreeEntry
+from ...models_internal.observations import CodebaseContext
+from ...models_internal.primitives import FilePatch, FileTreeEntry
 from .runner import ShellExecutor
 
 _CONTEXT_LINES = 100
@@ -307,7 +307,7 @@ class FileHandler:
     def __repr__(self) -> str:
         return f"FileHandler(root={self._root}, active={self._context.active_file!r})"
 
-    #─── File listing ──────────────────────────────────────────────────────
+    # ─── File listing ──────────────────────────────────────────────────────
 
     def read(self, path: str) -> str:
         """Read the content of a file."""
@@ -322,11 +322,12 @@ class FileHandler:
         files = (result.stdout or "").splitlines()
 
         # Filter Python files
-        py_files = [f for f in files if f.endswith('.py')]
+        py_files = [f for f in files if f.endswith(".py")]
 
         # Apply exclude patterns if provided
         if exclude_patterns:
             import fnmatch
+
             filtered = []
             for f in py_files:
                 excluded = False

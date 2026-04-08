@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import logging
 
-from ...models.observations import GraderContext, RewardContext
+from ...models_internal.observations import GraderContext, RewardContext
 from ..registry.scenario import ScenarioSpec
 from ..sandbox.files import FileHandler
 from ..sandbox.runner import ShellExecutor

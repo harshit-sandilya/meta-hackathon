@@ -12,8 +12,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ...models.actions import GitDiffParams, RunShellParams
-from ...models.observations import GitStatus
+from ...models_internal.actions import GitDiffParams, RunShellParams
+from ...models_internal.observations import GitStatus
 from .runner import ShellExecutor
 
 _GIT_ENV = {

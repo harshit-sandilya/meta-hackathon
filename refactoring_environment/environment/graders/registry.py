@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import warnings
 
-from ...models.grader_spec import GraderSpec
+from ...models_internal.grader_spec import GraderSpec
 from ..sandbox.files import FileHandler
 from ..sandbox.runner import ShellExecutor
 from .types import (

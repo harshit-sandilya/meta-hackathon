@@ -1,4 +1,4 @@
 from .client import RefactoringEnv
-from .models import RefactorAction, RefactorObservation
+from .models_internal import RefactorAction, RefactorObservation
 
 __all__ = ["RefactoringEnv", "RefactorAction", "RefactorObservation"]

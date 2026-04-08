@@ -3,8 +3,8 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import ClassVar
 
-from .....models.actions import RunShellParams
-from .....models.grader_spec import GraderSpec
+from .....models_internal.actions import RunShellParams
+from .....models_internal.grader_spec import GraderSpec
 from ....sandbox.files import FileHandler
 from ....sandbox.runner import ShellExecutor
 from .grade_result import GradeResult

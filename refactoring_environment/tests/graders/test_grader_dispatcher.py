@@ -13,14 +13,18 @@ import pytest
 
 from refactoring_environment.environment.graders import GraderDispatcher
 from refactoring_environment.environment.graders.types.base import GradeResult
-from refactoring_environment.models.grader_spec import GraderSpec
-from refactoring_environment.models.observations import GraderContext, RewardContext
+from refactoring_environment.models_internal.grader_spec import GraderSpec
+from refactoring_environment.models_internal.observations import (
+    GraderContext,
+    RewardContext,
+)
 from refactoring_environment.environment.registry.scenario import ScenarioSpec
 from refactoring_environment.environment.sandbox.files import FileHandler
 from refactoring_environment.environment.sandbox.runner import ShellExecutor
 
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
+
 
 @pytest.fixture
 def mock_executor() -> Mock:
@@ -44,25 +48,30 @@ def mock_scenario() -> Mock:
 
 
 @pytest.fixture
-def grader_dispatcher(mock_scenario: Mock, mock_executor: Mock, mock_file_handler: Mock) -> GraderDispatcher:
+def grader_dispatcher(
+    mock_scenario: Mock, mock_executor: Mock, mock_file_handler: Mock
+) -> GraderDispatcher:
     """Create a GraderDispatcher instance with mocked dependencies."""
     return GraderDispatcher(
-        scenario=mock_scenario,
-        executor=mock_executor,
-        file_handler=mock_file_handler
+        scenario=mock_scenario, executor=mock_executor, file_handler=mock_file_handler
     )
 
 
 # ── Unit Tests for GraderDispatcher ─────────────────────────────────────────
 
+
 class TestGraderDispatcher:
     """Test the GraderDispatcher class."""
 
-    def test_initialization_empty_graders(self, grader_dispatcher: GraderDispatcher) -> None:
+    def test_initialization_empty_graders(
+        self, grader_dispatcher: GraderDispatcher
+    ) -> None:
         """Test initialization with no graders."""
         assert len(grader_dispatcher._graders) == 0
 
-    def test_initialization_with_graders(self, mock_scenario: Mock, mock_executor: Mock, mock_file_handler: Mock) -> None:
+    def test_initialization_with_graders(
+        self, mock_scenario: Mock, mock_executor: Mock, mock_file_handler: Mock
+    ) -> None:
         """Test initialization with configured graders."""
         # Set up mock scenario with graders
         mock_scenario.graders = {
@@ -70,7 +79,9 @@ class TestGraderDispatcher:
             "coverage": {"weight": 0.3},
         }
 
-        with patch('refactoring_environment.environment.graders.registry.build_grader') as mock_build:
+        with patch(
+            "refactoring_environment.environment.graders.registry.build_grader"
+        ) as mock_build:
             # Mock grader instances
             mock_lint_grader = Mock()
             mock_lint_grader.grader_id = "lint"
@@ -86,7 +97,7 @@ class TestGraderDispatcher:
             dispatcher = GraderDispatcher(
                 scenario=mock_scenario,
                 executor=mock_executor,
-                file_handler=mock_file_handler
+                file_handler=mock_file_handler,
             )
 
         assert len(dispatcher._graders) == 2
@@ -111,12 +122,16 @@ class TestGraderDispatcher:
         assert reward_ctx.step_score == 0.0
         assert reward_ctx.cumulative_penalty == 0.5
 
-    def test_grade_with_single_grader(self, mock_scenario: Mock, mock_executor: Mock, mock_file_handler: Mock) -> None:
+    def test_grade_with_single_grader(
+        self, mock_scenario: Mock, mock_executor: Mock, mock_file_handler: Mock
+    ) -> None:
         """Test grading with a single grader."""
         # Set up mock scenario with one grader
         mock_scenario.graders = {"lint": {"weight": 0.8}}
 
-        with patch('refactoring_environment.environment.graders.registry.build_grader') as mock_build:
+        with patch(
+            "refactoring_environment.environment.graders.registry.build_grader"
+        ) as mock_build:
             # Mock grader instance
             mock_lint_grader = Mock()
             mock_lint_grader.grader_id = "lint"
@@ -128,7 +143,7 @@ class TestGraderDispatcher:
                 feedbacks=["Lint: 2 violations fixed"],
                 errors=[],
                 tool_errors=[],
-                added_violations=0
+                added_violations=0,
             )
 
             mock_build.return_value = mock_lint_grader
@@ -136,7 +151,7 @@ class TestGraderDispatcher:
             dispatcher = GraderDispatcher(
                 scenario=mock_scenario,
                 executor=mock_executor,
-                file_handler=mock_file_handler
+                file_handler=mock_file_handler,
             )
 
             grader_ctx, reward_ctx = dispatcher.grade(step=1, cumulative_penalty=0.2)
@@ -152,7 +167,9 @@ class TestGraderDispatcher:
         assert reward_ctx.step_score == 0.72
         assert reward_ctx.cumulative_penalty == 0.2
 
-    def test_grade_with_multiple_graders(self, mock_scenario: Mock, mock_executor: Mock, mock_file_handler: Mock) -> None:
+    def test_grade_with_multiple_graders(
+        self, mock_scenario: Mock, mock_executor: Mock, mock_file_handler: Mock
+    ) -> None:
         """Test grading with multiple graders of different weights."""
         # Set up mock scenario with multiple graders
         mock_scenario.graders = {
@@ -161,7 +178,9 @@ class TestGraderDispatcher:
             "style": {"weight": 0.2},
         }
 
-        with patch('refactoring_environment.environment.graders.registry.build_grader') as mock_build:
+        with patch(
+            "refactoring_environment.environment.graders.registry.build_grader"
+        ) as mock_build:
             # Mock grader instances
             mock_lint_grader = Mock()
             mock_lint_grader.grader_id = "lint"
@@ -171,7 +190,7 @@ class TestGraderDispatcher:
                 feedbacks=["Lint: good"],
                 errors=[],
                 tool_errors=[],
-                added_violations=0
+                added_violations=0,
             )
 
             mock_coverage_grader = Mock()
@@ -182,7 +201,7 @@ class TestGraderDispatcher:
                 feedbacks=["Coverage: excellent"],
                 errors=[],
                 tool_errors=[],
-                added_violations=0
+                added_violations=0,
             )
 
             mock_style_grader = Mock()
@@ -193,15 +212,19 @@ class TestGraderDispatcher:
                 feedbacks=["Style: needs work"],
                 errors=[],
                 tool_errors=[],
-                added_violations=2  # Some violations
+                added_violations=2,  # Some violations
             )
 
-            mock_build.side_effect = [mock_lint_grader, mock_coverage_grader, mock_style_grader]
+            mock_build.side_effect = [
+                mock_lint_grader,
+                mock_coverage_grader,
+                mock_style_grader,
+            ]
 
             dispatcher = GraderDispatcher(
                 scenario=mock_scenario,
                 executor=mock_executor,
-                file_handler=mock_file_handler
+                file_handler=mock_file_handler,
             )
 
             grader_ctx, reward_ctx = dispatcher.grade(step=2, cumulative_penalty=0.1)
@@ -220,11 +243,15 @@ class TestGraderDispatcher:
         assert reward_ctx.step_score == 0.81
         assert reward_ctx.cumulative_penalty == 0.1
 
-    def test_grade_with_regression(self, mock_scenario: Mock, mock_executor: Mock, mock_file_handler: Mock) -> None:
+    def test_grade_with_regression(
+        self, mock_scenario: Mock, mock_executor: Mock, mock_file_handler: Mock
+    ) -> None:
         """Test that regression detection works correctly."""
         mock_scenario.graders = {"lint": {"weight": 1.0}}
 
-        with patch('refactoring_environment.environment.graders.registry.build_grader') as mock_build:
+        with patch(
+            "refactoring_environment.environment.graders.registry.build_grader"
+        ) as mock_build:
             mock_lint_grader = Mock()
             mock_lint_grader.grader_id = "lint"
             mock_lint_grader.spec = GraderSpec(weight=1.0, target_coverage=0.8)
@@ -233,7 +260,7 @@ class TestGraderDispatcher:
                 feedbacks=["Lint: regression detected"],
                 errors=[],
                 tool_errors=[],
-                added_violations=5  # Multiple new violations
+                added_violations=5,  # Multiple new violations
             )
 
             mock_build.return_value = mock_lint_grader
@@ -241,7 +268,7 @@ class TestGraderDispatcher:
             dispatcher = GraderDispatcher(
                 scenario=mock_scenario,
                 executor=mock_executor,
-                file_handler=mock_file_handler
+                file_handler=mock_file_handler,
             )
 
             grader_ctx, reward_ctx = dispatcher.grade(step=1, cumulative_penalty=0.0)
@@ -250,11 +277,15 @@ class TestGraderDispatcher:
         assert grader_ctx.penalties == ["5"]  # Penalties are strings
         assert reward_ctx.step_score == 0.6
 
-    def test_grade_with_tool_errors(self, mock_scenario: Mock, mock_executor: Mock, mock_file_handler: Mock) -> None:
+    def test_grade_with_tool_errors(
+        self, mock_scenario: Mock, mock_executor: Mock, mock_file_handler: Mock
+    ) -> None:
         """Test handling of tool errors from graders."""
         mock_scenario.graders = {"lint": {"weight": 1.0}}
 
-        with patch('refactoring_environment.environment.graders.registry.build_grader') as mock_build:
+        with patch(
+            "refactoring_environment.environment.graders.registry.build_grader"
+        ) as mock_build:
             mock_lint_grader = Mock()
             mock_lint_grader.grader_id = "lint"
             mock_lint_grader.spec = GraderSpec(weight=1.0, target_coverage=0.8)
@@ -263,7 +294,7 @@ class TestGraderDispatcher:
                 feedbacks=["Lint: some issues"],
                 errors=["SyntaxError in test.py"],
                 tool_errors=["ruff not found"],
-                added_violations=0
+                added_violations=0,
             )
 
             mock_build.return_value = mock_lint_grader
@@ -271,7 +302,7 @@ class TestGraderDispatcher:
             dispatcher = GraderDispatcher(
                 scenario=mock_scenario,
                 executor=mock_executor,
-                file_handler=mock_file_handler
+                file_handler=mock_file_handler,
             )
 
             grader_ctx, reward_ctx = dispatcher.grade(step=1, cumulative_penalty=0.0)
@@ -284,10 +315,13 @@ class TestGraderDispatcher:
 
 # ── Integration Tests ────────────────────────────────────────────────────────
 
+
 class TestGraderDispatcherIntegration:
     """Integration tests for realistic scenarios."""
 
-    def test_unknown_grader_handling(self, mock_scenario: Mock, mock_executor: Mock, mock_file_handler: Mock) -> None:
+    def test_unknown_grader_handling(
+        self, mock_scenario: Mock, mock_executor: Mock, mock_file_handler: Mock
+    ) -> None:
         """Test that unknown grader IDs are handled gracefully."""
         mock_scenario.graders = {
             "lint": {"weight": 0.5},
@@ -295,8 +329,9 @@ class TestGraderDispatcherIntegration:
             "coverage": {"weight": 0.2},
         }
 
-        with patch('refactoring_environment.environment.graders.registry.build_grader') as mock_build, \
-             patch('warnings.warn') as mock_warn:
+        with patch(
+            "refactoring_environment.environment.graders.registry.build_grader"
+        ) as mock_build, patch("warnings.warn") as mock_warn:
 
             mock_lint_grader = Mock()
             mock_lint_grader.grader_id = "lint"
@@ -320,22 +355,26 @@ class TestGraderDispatcherIntegration:
             dispatcher = GraderDispatcher(
                 scenario=mock_scenario,
                 executor=mock_executor,
-                file_handler=mock_file_handler
+                file_handler=mock_file_handler,
             )
 
             # Should warn about unknown grader
             assert mock_warn.called
             assert len(dispatcher._graders) == 2  # Only lint and coverage
 
-    def test_grader_ordering_by_weight(self, mock_scenario: Mock, mock_executor: Mock, mock_file_handler: Mock) -> None:
+    def test_grader_ordering_by_weight(
+        self, mock_scenario: Mock, mock_executor: Mock, mock_file_handler: Mock
+    ) -> None:
         """Test that graders are sorted by weight in descending order."""
         mock_scenario.graders = {
-            "lint": {"weight": 0.2},     # Should be last
+            "lint": {"weight": 0.2},  # Should be last
             "coverage": {"weight": 0.5},  # Should be second
-            "style": {"weight": 0.8},    # Should be first
+            "style": {"weight": 0.8},  # Should be first
         }
 
-        with patch('refactoring_environment.environment.graders.registry.build_grader') as mock_build:
+        with patch(
+            "refactoring_environment.environment.graders.registry.build_grader"
+        ) as mock_build:
             # Create mock graders
             graders = []
             for grader_id, weight in [("lint", 0.2), ("coverage", 0.5), ("style", 0.8)]:
@@ -349,15 +388,17 @@ class TestGraderDispatcherIntegration:
             dispatcher = GraderDispatcher(
                 scenario=mock_scenario,
                 executor=mock_executor,
-                file_handler=mock_file_handler
+                file_handler=mock_file_handler,
             )
 
             # Check order - should be sorted by weight descending
-            assert dispatcher._graders[0].grader_id == "style"   # weight 0.8
+            assert dispatcher._graders[0].grader_id == "style"  # weight 0.8
             assert dispatcher._graders[1].grader_id == "coverage"  # weight 0.5
-            assert dispatcher._graders[2].grader_id == "lint"     # weight 0.2
+            assert dispatcher._graders[2].grader_id == "lint"  # weight 0.2
 
-    def test_empty_grader_config(self, mock_scenario: Mock, mock_executor: Mock, mock_file_handler: Mock) -> None:
+    def test_empty_grader_config(
+        self, mock_scenario: Mock, mock_executor: Mock, mock_file_handler: Mock
+    ) -> None:
         """Test handling of empty grader configuration."""
         # Empty graders dict
         mock_scenario.graders = {}
@@ -365,7 +406,7 @@ class TestGraderDispatcherIntegration:
         dispatcher = GraderDispatcher(
             scenario=mock_scenario,
             executor=mock_executor,
-            file_handler=mock_file_handler
+            file_handler=mock_file_handler,
         )
 
         grader_ctx, reward_ctx = dispatcher.grade(step=1, cumulative_penalty=0.0)
