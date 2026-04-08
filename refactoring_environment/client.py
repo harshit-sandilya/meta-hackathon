@@ -24,6 +24,7 @@ from openenv.core.client_types import StepResult
 from openenv.core.env_client import EnvClient
 
 from .models_internal import RefactorAction, RefactorObservation, RefactorState
+import json
 
 
 class RefactoringEnv(EnvClient[RefactorAction, RefactorObservation, RefactorState]):
@@ -75,6 +76,8 @@ class RefactoringEnv(EnvClient[RefactorAction, RefactorObservation, RefactorStat
             **obs_raw,
         }
 
+        print(json.dump(obs_full, indent=4))
+
         observation = RefactorObservation.model_validate(obs_full)
 
         return StepResult(
@@ -104,7 +107,6 @@ class RefactoringEnv(EnvClient[RefactorAction, RefactorObservation, RefactorStat
 
         Supported kwargs (all optional):
             task_id    (str)  — pin a specific task; server picks randomly if omitted
-            difficulty (str)  — "easy" | "medium" | "hard"
             max_steps  (int)  — override the episode step budget
             seed       (int)  — for deterministic task selection
             episode_id (str)  — reuse a specific episode ID (replay / eval)
