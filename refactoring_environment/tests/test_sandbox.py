@@ -57,6 +57,7 @@ def _step(
         step=step,
         episode_id="test-episode",
         task_id=TASK_NAME,
+        description="test description",
     )
 
 
@@ -150,7 +151,7 @@ class TestViewFile:
             params={"path": "does_not_exist.py"},
         )
         with pytest.raises(FileNotFoundError):
-            sandbox.act(action, step=1, episode_id="test", task_id=TASK_NAME)
+            sandbox.act(action, step=1, episode_id="test", task_id=TASK_NAME, description="test description")
 
 
 # ── list_directory ────────────────────────────────────────────────────────────
@@ -315,7 +316,7 @@ class TestEditFile:
             params={"patch": {"path": "../../etc/passwd", "new_content": "pwned"}},
         )
         with pytest.raises(PermissionError):
-            sandbox.act(action, step=99, episode_id="test", task_id=TASK_NAME)
+            sandbox.act(action, step=99, episode_id="test", task_id=TASK_NAME, description="test description")
 
 
 # ── edit_files ────────────────────────────────────────────────────────────────
@@ -417,7 +418,7 @@ class TestRunShell:
             params={"command": "ls", "timeout_sec": 5, "workdir": "../../"},
         )
         with pytest.raises(PermissionError):
-            sandbox.act(action, step=99, episode_id="test", task_id=TASK_NAME)
+            sandbox.act(action, step=99, episode_id="test", task_id=TASK_NAME, description="test description")
 
     def test_run_does_not_pollute_git_status(self, sandbox: SandboxEnv) -> None:
         # Shell commands should not auto-commit anything

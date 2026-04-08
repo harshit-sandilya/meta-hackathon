@@ -23,7 +23,7 @@ class RefactorEnvironment(Environment):
         # State variables
         self._episode_id: str | None = None
         self._task_id: str | None = None
-        self._task_description = str | None = None
+        self._task_description: str | None = None
         self._step_count: int = 0
         self._done: bool = False
 

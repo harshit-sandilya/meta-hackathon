@@ -125,7 +125,7 @@ def parse_action(raw: str) -> RefactorAction:
 # ── Build per-step prompt from observation ────────────────────────────────────
 def build_prompt(obs, step: int, history: list[str]) -> str:
     task_id = getattr(obs, "task_id", "unknown")
-    task_desc = getattr(obs, "task_description", "")
+    task_desc = getattr(obs, "description", "")
     codebase = getattr(obs, "codebase", None)
     execution = getattr(obs, "execution", None)
     grader = getattr(obs, "grader", None)
@@ -161,6 +161,8 @@ def build_prompt(obs, step: int, history: list[str]) -> str:
         file_tree = (
             "\n".join(tree_lines) or "(empty — run list_directory path='.' to populate)"
         )
+        print(f"[STEP_DEBUG] file_tree={file_tree}")
+        print(f"[STEP_DEBUG] active_file={active_file} content_len={len(file_content)}")
 
     # ── ExecutionContext ──────────────────────────────────────────────────
     exec_block = "None"
@@ -186,6 +188,11 @@ def build_prompt(obs, step: int, history: list[str]) -> str:
             parts.append(f"[exit code: {retcode}]")
         if parts:
             exec_block = "\n".join(parts)
+        print(f"[STEP_DEBUG] exec_stdout={stdout[:300].replace(chr(10),' ')}")
+        if stderr:
+            print(f"[STEP_DEBUG] exec_stderr={stderr[:200].replace(chr(10),' ')}")
+        if run_error:
+            print(f"[STEP_DEBUG] exec_run_error={run_error}")
 
     # ── GraderContext ─────────────────────────────────────────────────────
     scores = getattr(grader, "scores", {}) if grader else {}
@@ -289,6 +296,10 @@ async def run_episode(env: RefactoringEnv, episode_count: int, task_name: str) -
         prompt = build_prompt(obs, step, history)
         raw_resp = call_llm(prompt)
         action = parse_action(raw_resp)
+        print(f"[STEP_DEBUG] raw_response={raw_resp[:300].replace(chr(10), ' ')}")
+        print(
+            f"[STEP_DEBUG] parsed_action={action.action_type} params={json.dumps(action.params)}"
+        )
 
         print(
             f"[STEP] episode={task_name} step={step}/{MAX_STEPS} action={action.action_type}",
@@ -305,6 +316,8 @@ async def run_episode(env: RefactoringEnv, episode_count: int, task_name: str) -
             step_result = await env.step(action)
 
             obs = step_result.observation
+            task_desc = getattr(obs, "description", "")
+            print(f"[EPISODE_START] task_description={task_desc[:300]}")
             done = step_result.done
             # reward is a float on the wire (weight-summed score)
             reward = step_result.reward if step_result.reward is not None else 0.0
