@@ -15,7 +15,6 @@ import json
 import os
 import re
 import textwrap
-from typing import Optional
 
 from openai import OpenAI
 from refactoring_environment import RefactoringEnv, RefactorAction
@@ -56,8 +55,13 @@ SYSTEM_PROMPT = textwrap.dedent(
       list_directory   — list files   (args: path)
       search_codebase  — regex search (args: pattern, optional path)
       edit_file        — edit a file  (args: path, new_content OR unified_diff)
+      edit_files       — edit multiple files (args: patches)
       run_shell        — run a shell command (args: command)
       git_diff         — view diff vs baseline (no args needed)
+      submit           — submit your changes (args: optional note)
+
+    Important: Always check file existence with list_directory before trying to view or edit files.
+    If you encounter errors, use list_directory to verify file paths and structure.
 
     Reply with ONLY a raw JSON object — no markdown, no explanation.
     Examples:
@@ -65,6 +69,7 @@ SYSTEM_PROMPT = textwrap.dedent(
       {"action_type": "edit_file", "args": {"path": "utils.py", "new_content": "..."}}
       {"action_type": "run_shell", "args": {"command": "ruff check ."}}
       {"action_type": "git_diff",  "args": {}}
+      {"action_type": "list_directory", "args": {"path": "."}}
 """
 ).strip()
 
@@ -103,6 +108,8 @@ def parse_action(raw: str) -> RefactorAction:
 
 # ── Build per-step prompt from observation ────────────────────────────────────
 def build_prompt(obs, step: int, history: list[str]) -> str:
+    from refactoring_environment.models_internal.actions import ActionType
+
     task_id = getattr(obs, "task_id", "unknown")
     task_desc = getattr(obs, "task_description", "")
     codebase = getattr(obs, "codebase", None)
@@ -186,24 +193,85 @@ async def run_episode(env: RefactoringEnv, episode_count: int, task_name: str) -
         print(f"  Step {step:2d} | action={action.action_type:18s}", end="", flush=True)
 
         # step() also returns a StepResult
-        step_result = await env.step(action)
+        try:
+            step_result = await env.step(action)
 
-        obs = step_result.observation
-        done = step_result.done
-        # reward is a float on the wire (weight-summed score)
-        reward = step_result.reward if step_result.reward is not None else 0.0
+            obs = step_result.observation
+            done = step_result.done
+            # reward is a float on the wire (weight-summed score)
+            reward = step_result.reward if step_result.reward is not None else 0.0
 
-        # richer grader score lives in obs.reward_context.step_score
-        ctx_score = getattr(getattr(obs, "reward_context", None), "step_score", reward)
-        final_reward = ctx_score if ctx_score is not None else reward
+            # richer grader score lives in obs.reward_context.step_score
+            ctx_score = getattr(
+                getattr(obs, "reward_context", None), "step_score", reward
+            )
+            final_reward = ctx_score if ctx_score is not None else reward
 
-        print(f" | reward={float(reward):.3f}  score={final_reward:.3f}  done={done}")
+            print(
+                f" | reward={float(reward):.3f}  score={final_reward:.3f}  done={done}"
+            )
 
-        history.append(f"Step {step}: {action.action_type} → score={final_reward:.3f}")
+            history.append(
+                f"Step {step}: {action.action_type} → score={final_reward:.3f}"
+            )
 
-        if done:
-            print("  ✓ Episode complete.")
-            break
+            if done:
+                print("  ✓ Episode complete.")
+                break
+
+        except RuntimeError as e:
+            # Handle environment execution errors gracefully
+            error_msg = str(e)
+            print(f" | ERROR: {error_msg}")
+
+            # Extract meaningful error information for the model
+            if "File not found" in error_msg:
+                file_path = error_msg.split("File not found in sandbox: ")[-1].split(
+                    " (code:"
+                )[0]
+                error_feedback = f"File not found: {file_path}. Use list_directory to verify available files."
+            elif "EXECUTION_ERROR" in error_msg:
+                error_feedback = f"Execution error: {error_msg}. Check action parameters and try again."
+            else:
+                error_feedback = f"Environment error: {error_msg}"
+
+            # Add error to history so model can learn from it
+            history.append(
+                f"Step {step}: {action.action_type} → ERROR: {error_feedback}"
+            )
+
+            # Create a feedback observation for the model
+            # We'll create a mock observation to continue the episode
+            from refactoring_environment.models_internal import (
+                RefactorObservation,
+            )
+            from refactoring_environment.models_internal.observations import (
+                GraderContext,
+            )
+
+            # Create error observation
+            error_obs = RefactorObservation(
+                episode_id=obs.episode_id,
+                task_id=obs.task_id,
+                task_description=obs.task_description,
+                current_step=step,
+                max_steps=obs.max_steps,
+                remaining_steps=obs.remaining_steps,
+                codebase=obs.codebase,
+                execution=obs.execution,
+                grader=GraderContext(feedbacks=[error_feedback]),
+                git=obs.git,
+                reward_context=obs.reward_context,
+            )
+
+            obs = error_obs
+            done = False
+            reward = 0.0
+            final_reward = 0.0
+
+            print(f"  ✗ Action failed. Feedback provided to model: {error_feedback}")
+
+            # Continue to next step instead of breaking
     else:
         print(f"  Reached max steps ({MAX_STEPS}).")
 
