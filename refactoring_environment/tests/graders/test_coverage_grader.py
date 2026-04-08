@@ -234,6 +234,8 @@ class TestCoverageGraderComputeMetrics:
         mock_result.timed_out = False
         mock_result.run_error = ""
         mock_result.stdout = "8 passed, 2 failed"
+        mock_result.stderr = ""
+        mock_result.return_code = 0
 
         with patch.object(coverage_grader.executor, 'run', return_value=mock_result):
             # Mock the tmp directory behavior

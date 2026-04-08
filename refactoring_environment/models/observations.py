@@ -25,6 +25,7 @@ class ExecutionContext(BaseModel):
     stderr: str | None = None  # stderr, truncated to 8 KB
     return_code: int | None = None
     timed_out: bool = False
+    run_error: str | None = None  # error message if applicable
 
 
 class GraderContext(BaseModel):

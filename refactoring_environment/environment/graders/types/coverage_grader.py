@@ -37,6 +37,7 @@ import tempfile
 from pathlib import Path
 from typing import ClassVar
 
+from ....models.actions import RunShellParams
 from ....models.grader_spec import GraderSpec
 from ...sandbox.files import FileHandler
 from ...sandbox.runner import ShellExecutor
@@ -104,15 +105,22 @@ class CoverageGrader(BaseGrader):
                 *test_paths,
             ]
 
-            result = self.executor.run(cmd, cwd=repo_path, timeout=timeout)
+            # Convert list to string
+            cmd_str = " ".join(cmd)
+            result = self.executor.run(
+                RunShellParams(command=cmd_str, timeout_sec=timeout, workdir=".")
+            )
 
             if result.timed_out:
                 return _empty_metrics(
                     timed_out=True,
                     run_error=f"pytest timed out after {timeout}s",
                 )
-            if result.run_error:
+            if hasattr(result, 'run_error') and result.run_error and result.run_error.strip():
                 return _empty_metrics(run_error=result.run_error)
+            # Check return_code only if it exists and is not 0
+            if hasattr(result, 'return_code') and result.return_code != 0:
+                return _empty_metrics(run_error=result.stderr or "pytest failed")
 
             passed, failed, errors = _parse_counts(pytest_json, result.stdout)
             total = passed + failed + errors
@@ -163,12 +171,10 @@ class CoverageGrader(BaseGrader):
             msg = current.get("run_error") or "pytest timed out"
             return GradeResult(
                 score=0.0,
-                raw_metrics={
-                    "mode": mode,
-                    "run_error": msg,
-                    "timed_out": current.get("timed_out", False),
-                },
-                feedback=f"[Coverage] pytest did not complete: {msg}",
+                feedbacks=[f"[Coverage] pytest did not complete: {msg}"],
+                errors=[] if not current.get("timed_out") else [f"pytest timed out after {current.get('timeout', 'unknown')}s"],
+                tool_errors=[] if not current.get("run_error") else [current.get("run_error")],
+                added_violations=0,
             )
 
         if mode == "constraint":
@@ -176,8 +182,9 @@ class CoverageGrader(BaseGrader):
         return self._objective_result(baseline, current)
 
     def _resolve_mode(self) -> str:
-        # Default to constraint mode for interface stability
-        # Remove dependency on spec.config to maintain compatibility
+        # Check spec.config if available, default to constraint mode
+        if hasattr(self.spec, 'config') and self.spec.config and 'coverage' in self.spec.config:
+            return self.spec.config.get('coverage', {}).get('mode', 'constraint')
         return "constraint"
 
     def _constraint_result(self, baseline: dict, current: dict) -> GradeResult:
@@ -245,6 +252,9 @@ class CoverageGrader(BaseGrader):
             "branch_coverage": True,
             "target_coverage": 0.80,
         }
+        # Merge spec.config if available
+        if hasattr(self.spec, 'config') and self.spec.config and 'coverage' in self.spec.config:
+            cfg.update(self.spec.config['coverage'])
         target = float(cfg.get("target_coverage", 0.80))
 
         cov_now = current["line_coverage"]

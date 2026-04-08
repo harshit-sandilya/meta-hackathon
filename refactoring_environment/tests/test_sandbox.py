@@ -325,8 +325,28 @@ class TestEditFiles:
     def test_edit_multiple_files(self, sandbox: SandboxEnv) -> None:
         ctx, _ = sandbox.get_initial_observation()
         files = [e.path for e in ctx.file_tree if not e.is_dir]
+
+        # Create a second file if needed
         if len(files) < 2:
-            pytest.skip("Need at least 2 files.")
+            # Try to include test files
+            files = [e.path for e in ctx.file_tree if not e.is_dir or 'test' in e.path.lower()]
+
+        # If still not enough, create a temporary test file
+        if len(files) < 2:
+            # Create a temporary test file
+            new_file = "temp_test_file.py"
+            action = RefactorAction(
+                action_type=ActionType.edit_file.value,
+                params={"patch": {"path": new_file, "new_content": "# temporary file\n"}},
+            )
+            sandbox.act(
+                action,
+                step=1,
+                episode_id="test",
+                task_id="lint-cleanup",
+            )
+            # Use the first file and the new file
+            files = [files[0], new_file]
 
         patches = [
             {"path": files[0], "new_content": "# patched file 0\n"},

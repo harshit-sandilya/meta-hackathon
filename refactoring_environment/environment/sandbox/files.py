@@ -306,3 +306,36 @@ class FileHandler:
 
     def __repr__(self) -> str:
         return f"FileHandler(root={self._root}, active={self._context.active_file!r})"
+
+    #─── File listing ──────────────────────────────────────────────────────
+
+    def read(self, path: str) -> str:
+        """Read the content of a file."""
+        abs_path = self._safe_path(path)
+        return abs_path.read_text(encoding="utf-8", errors="replace")
+
+    def list_python_files(self, exclude_patterns: list[str] | None = None) -> list[str]:
+        """List all Python files in the repository, filtering by exclude patterns."""
+        result = self._executor.run(
+            RunShellParams(command="git ls-files", timeout_sec=10, workdir=".")
+        )
+        files = (result.stdout or "").splitlines()
+
+        # Filter Python files
+        py_files = [f for f in files if f.endswith('.py')]
+
+        # Apply exclude patterns if provided
+        if exclude_patterns:
+            import fnmatch
+            filtered = []
+            for f in py_files:
+                excluded = False
+                for pattern in exclude_patterns:
+                    if fnmatch.fnmatch(f, pattern):
+                        excluded = True
+                        break
+                if not excluded:
+                    filtered.append(f)
+            py_files = filtered
+
+        return py_files

@@ -129,12 +129,20 @@ class ShellExecutor:
                 else raw_err
             )
 
+        # Determine run_error based on return code or exceptions
+        run_error = None
+        if timed_out:
+            run_error = f"Command timed out after {effective_timeout}s"
+        elif returncode != 0:
+            run_error = stderr or "Command failed"
+
         return ExecutionContext(
             command=params.command,
             stdout=self._truncate(stdout),
             stderr=self._truncate(stderr),
             return_code=returncode,
             timed_out=timed_out,
+            run_error=run_error,
         )
 
     # ── Private ───────────────────────────────────────────────────────

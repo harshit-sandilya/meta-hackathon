@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=False)
 class GraderSpec:
     """
     Configuration for one grader entry under `graders:`.
@@ -21,6 +21,7 @@ class GraderSpec:
 
     weight: float
     target_coverage: float = 0.80
+    config: dict = field(default_factory=dict)
 
     @classmethod
     def from_raw(cls, raw: dict | float | int) -> GraderSpec:
@@ -30,4 +31,5 @@ class GraderSpec:
         return cls(
             weight=float(raw.get("weight", 0.0)),
             target_coverage=float(raw.get("target_coverage", 0.80)),
+            config=raw.get("config", {}),
         )
