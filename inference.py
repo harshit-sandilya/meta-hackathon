@@ -29,7 +29,7 @@ HF_REPO_ID = "harshit-sandilya/refactoring-environment"
 
 MAX_STEPS = 10  # steps per episode
 TEMPERATURE = 0.0  # deterministic — required for reproducible grader scores
-MAX_TOKENS = 512
+MAX_TOKENS = 65536
 
 # episode_count → task (cycles through 3 tasks: 0, 1, 2)
 TASK_EPISODES = {
@@ -118,6 +118,11 @@ def parse_action(raw: str) -> RefactorAction:
             action_type=data.get("action_type", "list_directory"),
             params=data.get("args", {"path": "."}),
         )
+    except json.JSONDecodeError as e:
+        print(
+            f"[PARSE_ERROR] JSONDecodeError: {e} | truncated={len(raw)>=MAX_TOKENS*3} | raw_tail={raw[-80:]!r}"
+        )
+        return RefactorAction(action_type="list_directory", params={"path": "."})
     except Exception:
         return RefactorAction(action_type="list_directory", params={"path": "."})
 
@@ -234,7 +239,7 @@ def build_prompt(obs, step: int, history: list[str]) -> str:
     if line_range:
         active_header += f" ({line_range})"
     file_body = (
-        file_content[:3000]
+        file_content[:65536]
         if file_content
         else "(no file loaded — use view_file to open one)"
     )
@@ -317,7 +322,7 @@ async def run_episode(env: RefactoringEnv, episode_count: int, task_name: str) -
 
             obs = step_result.observation
             task_desc = getattr(obs, "description", "")
-            print(f"[EPISODE_START] task_description={task_desc[:300]}")
+            print(f"[EPISODE_START] task_description={task_desc}")
             done = step_result.done
             # reward is a float on the wire (weight-summed score)
             reward = step_result.reward if step_result.reward is not None else 0.0
